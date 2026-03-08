@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -21,17 +22,33 @@ class ProfitEngine:
 	def get_recipe_for_item(self, item_id: int) -> Recipe | None:
 		return self.db.query(Recipe).filter(Recipe.output_item_id == item_id).first()
 
+	def get_price_row(self, item_id: int) -> CommercePrice | None:
+		return self.db.get(CommercePrice, item_id)
+
 	def get_buy_price(self, item_id: int) -> int | None:
-		price = self.db.get(CommercePrice, item_id)
+		price = self.get_price_row(item_id)
 		if price is None:
 			return None
 		return price.buy_price
 
 	def get_sell_price(self, item_id: int) -> int | None:
-		price = self.db.get(CommercePrice, item_id)
+		price = self.get_price_row(item_id)
 		if price is None:
 			return None
 		return price.sell_price
+
+	def parse_disciplines(self, raw_disciplines: str | None) -> list[str]:
+		if not raw_disciplines:
+			return []
+
+		try:
+			parsed = json.loads(raw_disciplines)
+			if isinstance(parsed, list):
+				return [str(value) for value in parsed]
+		except json.JSONDecodeError:
+			pass
+
+		return []
 
 	def calculate_craft_cost(self, item_id: int) -> float | None:
 		if item_id in self._craft_cost_cache:
@@ -65,35 +82,62 @@ class ProfitEngine:
 
 	def calculate_profit(self, item_id: int) -> dict[str, Any] | None:
 		craft_cost = self.calculate_craft_cost(item_id)
-		sell_price = self.get_sell_price(item_id)
+		price_row = self.get_price_row(item_id)
 
-		if craft_cost is None or sell_price is None:
+		if craft_cost is None or price_row is None or price_row.sell_price is None:
 			return None
+
+		sell_price = price_row.sell_price
+		buy_price = price_row.buy_price
+		buy_quantity = price_row.buy_quantity or 0
+		sell_quantity = price_row.sell_quantity or 0
 
 		net_sale = sell_price * 0.85
 		profit = net_sale - craft_cost
 		roi = profit / craft_cost if craft_cost > 0 else None
 
+		spread = None
+		spread_ratio = None
+		if buy_price is not None:
+			spread = sell_price - buy_price
+			if buy_price > 0:
+				spread_ratio = sell_price / buy_price
+
+		low_liquidity = buy_quantity < 5 or sell_quantity < 5
+		suspicious_spread = spread_ratio is not None and spread_ratio > 10
+
 		recipe = self.get_recipe_for_item(item_id)
-		discipline = None
-		if recipe is not None and recipe.disciplines:
-			discipline = recipe.disciplines
+		disciplines: list[str] = []
+		if recipe is not None:
+			disciplines = self.parse_disciplines(recipe.disciplines)
 
 		return {
 			"item_id": item_id,
 			"name": self.get_item_name(item_id),
-			"discipline": discipline,
+			"disciplines": disciplines,
 			"craft_cost": round(craft_cost, 2),
+			"buy_price": buy_price,
+			"buy_quantity": buy_quantity,
 			"sell_price": sell_price,
+			"sell_quantity": sell_quantity,
 			"net_sale": round(net_sale, 2),
 			"profit": round(profit, 2),
 			"roi": round(roi, 4) if roi is not None else None,
+			"spread": spread,
+			"spread_ratio": round(spread_ratio, 4) if spread_ratio is not None else None,
+			"low_liquidity": low_liquidity,
+			"suspicious_spread": suspicious_spread,
 		}
 
 	def calculate_profit_table(
 		self,
 		limit: int = 100,
 		min_profit: float = 0.0,
+		min_buy_quantity: int = 0,
+		min_sell_quantity: int = 0,
+		exclude_low_liquidity: bool = False,
+		exclude_suspicious_spread: bool = False,
+		discipline: str | None = None,
 	) -> list[dict[str, Any]]:
 		results: list[dict[str, Any]] = []
 
@@ -107,6 +151,23 @@ class ProfitEngine:
 
 			if result["profit"] < min_profit:
 				continue
+
+			if result["buy_quantity"] < min_buy_quantity:
+				continue
+
+			if result["sell_quantity"] < min_sell_quantity:
+				continue
+
+			if exclude_low_liquidity and result["low_liquidity"]:
+				continue
+
+			if exclude_suspicious_spread and result["suspicious_spread"]:
+				continue
+
+			if discipline:
+				disciplines = [value.lower() for value in result["disciplines"]]
+				if discipline.lower() not in disciplines:
+					continue
 
 			results.append(result)
 
