@@ -1,6 +1,17 @@
 # GW2 Craft Profit Tool
+![Python](https://img.shields.io/badge/python-3.11-blue)
+![FastAPI](https://img.shields.io/badge/FastAPI-backend-green)
+![React](https://img.shields.io/badge/React-frontend-blue)
+![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
-A local tool for analyzing **Guild Wars 2 crafting profitability** using live Trading Post data.
+![Status](https://img.shields.io/badge/status-in%20development-orange) ![Version](https://img.shields.io/badge/version-0.1.0-blue)
+
+⚠️ Project Status: Early Development (v0.1.0)
+
+The backend data pipeline and profit calculation engine are implemented.
+The frontend interface and additional analysis features are still in progress.
+
+A local tool for analyzing **Guild Wars 2 crafting profitability** using live Trading Post data and recursive craft cost evaluation.
 
 This project replicates and expands on the functionality of the now-defunct **gw2profits** website by calculating which items are profitable to craft and sell on the Trading Post.
 
@@ -360,7 +371,3 @@ The application uses the official Guild Wars 2 public API.
 # License
 
 MIT License
-pydantic
-requests
-python-dotenv
-```
