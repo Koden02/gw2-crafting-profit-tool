@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.debug import router as debug_router
 from app.api.profitable_crafts import router as profitable_crafts_router
@@ -18,6 +19,14 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
 	title="GW2 Craft Profit Tool API",
 	lifespan=lifespan,
+)
+
+app.add_middleware(
+	CORSMiddleware,
+	allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
+	allow_credentials=True,
+	allow_methods=["*"],
+	allow_headers=["*"],
 )
 
 
