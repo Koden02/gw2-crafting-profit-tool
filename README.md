@@ -360,25 +360,6 @@ The application uses the official Guild Wars 2 public API.
 # License
 
 MIT License
-```
-
----
-
-# One Small Recommendation Before You Commit
-
-I would also add **two empty files now** so you don't forget later:
-
-```
-backend/requirements.txt
-frontend/package.json
-```
-
-And in `requirements.txt` you’ll likely want:
-
-```
-fastapi
-uvicorn
-sqlalchemy
 pydantic
 requests
 python-dotenv
