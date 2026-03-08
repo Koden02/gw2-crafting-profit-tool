@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -8,17 +7,6 @@ from sqlalchemy.orm import Session
 from app.models.commerce_price import CommercePrice
 from app.models.item import Item
 from app.models.recipe import Recipe
-
-
-@dataclass
-class IngredientBreakdown:
-	item_id: int
-	name: str
-	count: int
-	buy_price: int | None
-	craft_price: float | None
-	chosen_price: float
-	source: str
 
 
 class ProfitEngine:
@@ -86,12 +74,42 @@ class ProfitEngine:
 		profit = net_sale - craft_cost
 		roi = profit / craft_cost if craft_cost > 0 else None
 
+		recipe = self.get_recipe_for_item(item_id)
+		discipline = None
+		if recipe is not None and recipe.disciplines:
+			discipline = recipe.disciplines
+
 		return {
 			"item_id": item_id,
 			"name": self.get_item_name(item_id),
+			"discipline": discipline,
 			"craft_cost": round(craft_cost, 2),
 			"sell_price": sell_price,
 			"net_sale": round(net_sale, 2),
 			"profit": round(profit, 2),
 			"roi": round(roi, 4) if roi is not None else None,
 		}
+
+	def calculate_profit_table(
+		self,
+		limit: int = 100,
+		min_profit: float = 0.0,
+	) -> list[dict[str, Any]]:
+		results: list[dict[str, Any]] = []
+
+		recipes = self.db.query(Recipe).all()
+
+		for recipe in recipes:
+			result = self.calculate_profit(recipe.output_item_id)
+
+			if result is None:
+				continue
+
+			if result["profit"] < min_profit:
+				continue
+
+			results.append(result)
+
+		results.sort(key=lambda row: row["profit"], reverse=True)
+
+		return results[:limit]
