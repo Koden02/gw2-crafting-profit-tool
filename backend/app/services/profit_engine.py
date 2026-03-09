@@ -53,7 +53,11 @@ class ProfitEngine:
 
 		return []
 
-	def calculate_craft_cost(self, item_id: int) -> float | None:
+	def calculate_craft_cost(
+		self,
+		item_id: int,
+		material_pricing: str = "buy"
+	) -> float | None:
 		if item_id in self._craft_cost_cache:
 			return self._craft_cost_cache[item_id]
 
@@ -66,10 +70,14 @@ class ProfitEngine:
 		total_cost = 0.0
 
 		for ingredient in recipe.ingredients:
-			buy_price = self.get_buy_price(ingredient.item_id)
-			craft_price = self.calculate_craft_cost(ingredient.item_id)
+			if material_pricing == "buy":
+				market_price = self.get_buy_price(ingredient.item_id)
+			else:
+				market_price = self.get_sell_price(ingredient.item_id)
 
-			options = [price for price in [buy_price, craft_price] if price is not None]
+			craft_price = self.calculate_craft_cost(ingredient.item_id, material_pricing)
+
+			options = [price for price in [market_price, craft_price] if price is not None]
 			if not options:
 				self._craft_cost_cache[item_id] = None
 				return None
@@ -123,14 +131,22 @@ class ProfitEngine:
 
 		return breakdown
 
-	def calculate_profit(self, item_id: int) -> dict[str, Any] | None:
-		craft_cost = self.calculate_craft_cost(item_id)
+	def calculate_profit(
+		self,
+		item_id: int,
+		material_pricing: str = "buy",
+		output_pricing: str = "sell",
+	) -> dict[str, Any] | None:
+		craft_cost = self.calculate_craft_cost(item_id, material_pricing)
 		price_row = self.get_price_row(item_id)
 
 		if craft_cost is None or price_row is None or price_row.sell_price is None:
 			return None
 
-		sell_price = price_row.sell_price
+		if output_pricing == "sell":
+			sell_price = price_row.sell_price
+		else:
+			sell_price = price_row.buy_price
 		buy_price = price_row.buy_price
 		buy_quantity = price_row.buy_quantity or 0
 		sell_quantity = price_row.sell_quantity or 0
@@ -186,13 +202,19 @@ class ProfitEngine:
 		exclude_low_liquidity: bool = False,
 		exclude_suspicious_spread: bool = False,
 		discipline: str | None = None,
+		material_pricing: str = "buy",
+		output_pricing: str = "sell",
 	) -> list[dict[str, Any]]:
 		results: list[dict[str, Any]] = []
 
 		recipes = self.db.query(Recipe).all()
 
 		for recipe in recipes:
-			result = self.calculate_profit(recipe.output_item_id)
+			result = self.calculate_profit(
+				recipe.output_item_id,
+				material_pricing=material_pricing,
+				output_pricing=output_pricing,
+			)
 
 			if result is None:
 				continue

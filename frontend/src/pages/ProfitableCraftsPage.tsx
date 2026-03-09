@@ -24,6 +24,8 @@ import {
 import {
 	fetchProfitDetail,
 	fetchProfitableCrafts,
+	type MaterialPricingMode,
+	type OutputPricingMode,
 	type ProfitableCraft,
 } from "../api/profitableCrafts"
 import { formatCoins, formatNumber, formatPercent } from "../utils/formatting"
@@ -73,6 +75,9 @@ export default function ProfitableCraftsPage() {
 	const [sortKey, setSortKey] = useState<SortKey>("profit")
 	const [sortDirection, setSortDirection] = useState<SortDirection>("desc")
 
+    const [materialPricing, setMaterialPricing] = useState<MaterialPricingMode>("buy")
+    const [outputPricing, setOutputPricing] = useState<OutputPricingMode>("sell")
+
 	async function loadData() {
 		try {
 			setLoading(true)
@@ -86,6 +91,8 @@ export default function ProfitableCraftsPage() {
 				exclude_low_liquidity: excludeLowLiquidity,
 				exclude_suspicious_spread: excludeSuspiciousSpread,
 				discipline: discipline || undefined,
+                material_pricing: materialPricing,
+                output_pricing: outputPricing,
 			})
 
 			setRows(data)
@@ -105,7 +112,10 @@ export default function ProfitableCraftsPage() {
 			setDetailLoading(true)
 			setDetailError(null)
 
-			const detail = await fetchProfitDetail(itemId)
+			const detail = await fetchProfitDetail(itemId, {
+                material_pricing: materialPricing,
+                output_pricing: outputPricing,
+            })
 			setSelectedItem(detail)
 		} catch (err) {
 			if (err instanceof Error) {
@@ -260,6 +270,30 @@ export default function ProfitableCraftsPage() {
 							label="Exclude Suspicious Spread"
 						/>
 
+                        <TextField
+                            select
+                            label="Material Pricing"
+                            value={materialPricing}
+                            onChange={(e) => setMaterialPricing(e.target.value as MaterialPricingMode)}
+                            size="small"
+                            sx={{ minWidth: 180 }}
+                        >
+                            <MenuItem value="buy">Buy Order</MenuItem>
+                            <MenuItem value="sell">Instant Buy</MenuItem>
+                        </TextField>
+
+                        <TextField
+                            select
+                            label="Output Pricing"
+                            value={outputPricing}
+                            onChange={(e) => setOutputPricing(e.target.value as OutputPricingMode)}
+                            size="small"
+                            sx={{ minWidth: 180 }}
+                        >
+                            <MenuItem value="sell">List Sell</MenuItem>
+                            <MenuItem value="buy">Instant Sell</MenuItem>
+                        </TextField>
+                        
 						<Button variant="contained" onClick={() => void loadData()}>
 							Refresh
 						</Button>

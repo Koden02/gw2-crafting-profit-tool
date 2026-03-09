@@ -29,6 +29,9 @@ export type ProfitableCraft = {
 	ingredients?: IngredientBreakdown[]
 }
 
+export type MaterialPricingMode = "buy" | "sell"
+export type OutputPricingMode = "buy" | "sell"
+
 export type ProfitableCraftQuery = {
 	limit?: number
 	min_profit?: number
@@ -37,6 +40,8 @@ export type ProfitableCraftQuery = {
 	exclude_low_liquidity?: boolean
 	exclude_suspicious_spread?: boolean
 	discipline?: string
+	material_pricing?: MaterialPricingMode
+	output_pricing?: OutputPricingMode
 }
 
 const API_BASE_URL = "http://127.0.0.1:8000"
@@ -57,6 +62,8 @@ export async function fetchProfitableCrafts(
 		params.set("exclude_suspicious_spread", String(query.exclude_suspicious_spread))
 	}
 	if (query.discipline) params.set("discipline", query.discipline)
+	if (query.material_pricing) params.set("material_pricing", query.material_pricing)
+	if (query.output_pricing) params.set("output_pricing", query.output_pricing)
 
 	const response = await fetch(`${API_BASE_URL}/api/profitable-crafts?${params.toString()}`)
 
@@ -67,8 +74,25 @@ export async function fetchProfitableCrafts(
 	return response.json()
 }
 
-export async function fetchProfitDetail(itemId: number): Promise<ProfitableCraft> {
-	const response = await fetch(`${API_BASE_URL}/api/profit/${itemId}`)
+export async function fetchProfitDetail(
+	itemId: number,
+	options?: {
+		material_pricing?: MaterialPricingMode
+		output_pricing?: OutputPricingMode
+	},
+): Promise<ProfitableCraft> {
+	const params = new URLSearchParams()
+
+	if (options?.material_pricing) {
+		params.set("material_pricing", options.material_pricing)
+	}
+
+	if (options?.output_pricing) {
+		params.set("output_pricing", options.output_pricing)
+	}
+
+	const suffix = params.toString() ? `?${params.toString()}` : ""
+	const response = await fetch(`${API_BASE_URL}/api/profit/${itemId}${suffix}`)
 
 	if (!response.ok) {
 		throw new Error(`Failed to fetch profit detail: ${response.status}`)
