@@ -15,8 +15,11 @@ class ProfitEngine:
 		self.db = db
 		self._craft_cost_cache: dict[int, float | None] = {}
 
+	def get_item(self, item_id: int) -> Item | None:
+		return self.db.get(Item, item_id)
+
 	def get_item_name(self, item_id: int) -> str:
-		item = self.db.get(Item, item_id)
+		item = self.get_item(item_id)
 		return item.name if item else f"Unknown Item {item_id}"
 
 	def get_recipe_for_item(self, item_id: int) -> Recipe | None:
@@ -80,6 +83,46 @@ class ProfitEngine:
 		self._craft_cost_cache[item_id] = total_cost
 		return total_cost
 
+	def build_ingredient_breakdown(self, item_id: int) -> list[dict[str, Any]]:
+		recipe = self.get_recipe_for_item(item_id)
+		if recipe is None:
+			return []
+
+		breakdown: list[dict[str, Any]] = []
+
+		for ingredient in recipe.ingredients:
+			buy_price = self.get_buy_price(ingredient.item_id)
+			craft_price = self.calculate_craft_cost(ingredient.item_id)
+
+			options = []
+			if buy_price is not None:
+				options.append(("buy", float(buy_price)))
+			if craft_price is not None:
+				options.append(("craft", float(craft_price)))
+
+			if not options:
+				chosen_source = "unavailable"
+				chosen_unit_cost = None
+				total_cost = None
+			else:
+				chosen_source, chosen_unit_cost = min(options, key=lambda option: option[1])
+				total_cost = chosen_unit_cost * ingredient.count
+
+			breakdown.append(
+				{
+					"item_id": ingredient.item_id,
+					"name": self.get_item_name(ingredient.item_id),
+					"count": ingredient.count,
+					"buy_price": buy_price,
+					"craft_price": round(craft_price, 2) if craft_price is not None else None,
+					"chosen_source": chosen_source,
+					"chosen_unit_cost": round(chosen_unit_cost, 2) if chosen_unit_cost is not None else None,
+					"total_cost": round(total_cost, 2) if total_cost is not None else None,
+				}
+			)
+
+		return breakdown
+
 	def calculate_profit(self, item_id: int) -> dict[str, Any] | None:
 		craft_cost = self.calculate_craft_cost(item_id)
 		price_row = self.get_price_row(item_id)
@@ -108,13 +151,17 @@ class ProfitEngine:
 
 		recipe = self.get_recipe_for_item(item_id)
 		disciplines: list[str] = []
+		output_item_count = 1
+
 		if recipe is not None:
 			disciplines = self.parse_disciplines(recipe.disciplines)
+			output_item_count = recipe.output_item_count
 
 		return {
 			"item_id": item_id,
 			"name": self.get_item_name(item_id),
 			"disciplines": disciplines,
+			"output_item_count": output_item_count,
 			"craft_cost": round(craft_cost, 2),
 			"buy_price": buy_price,
 			"buy_quantity": buy_quantity,
@@ -127,6 +174,7 @@ class ProfitEngine:
 			"spread_ratio": round(spread_ratio, 4) if spread_ratio is not None else None,
 			"low_liquidity": low_liquidity,
 			"suspicious_spread": suspicious_spread,
+			"ingredients": self.build_ingredient_breakdown(item_id),
 		}
 
 	def calculate_profit_table(

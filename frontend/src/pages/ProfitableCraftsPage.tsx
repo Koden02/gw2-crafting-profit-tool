@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
 	Alert,
 	Box,
 	Button,
 	Checkbox,
 	CircularProgress,
+	Divider,
+	Drawer,
 	FormControlLabel,
 	MenuItem,
 	Paper,
@@ -20,9 +22,11 @@ import {
 } from "@mui/material"
 
 import {
+	fetchProfitDetail,
 	fetchProfitableCrafts,
 	type ProfitableCraft,
 } from "../api/profitableCrafts"
+import { formatCoins, formatNumber, formatPercent } from "../utils/formatting"
 
 const disciplineOptions = [
 	"",
@@ -37,10 +41,26 @@ const disciplineOptions = [
 	"Weaponsmith",
 ]
 
+type SortKey =
+	| "name"
+	| "craft_cost"
+	| "sell_price"
+	| "net_sale"
+	| "profit"
+	| "roi"
+	| "buy_quantity"
+	| "sell_quantity"
+
+type SortDirection = "asc" | "desc"
+
 export default function ProfitableCraftsPage() {
 	const [rows, setRows] = useState<ProfitableCraft[]>([])
 	const [loading, setLoading] = useState(false)
 	const [error, setError] = useState<string | null>(null)
+
+	const [selectedItem, setSelectedItem] = useState<ProfitableCraft | null>(null)
+	const [detailLoading, setDetailLoading] = useState(false)
+	const [detailError, setDetailError] = useState<string | null>(null)
 
 	const [limit, setLimit] = useState(50)
 	const [minProfit, setMinProfit] = useState(0)
@@ -49,6 +69,9 @@ export default function ProfitableCraftsPage() {
 	const [excludeLowLiquidity, setExcludeLowLiquidity] = useState(true)
 	const [excludeSuspiciousSpread, setExcludeSuspiciousSpread] = useState(true)
 	const [discipline, setDiscipline] = useState("")
+
+	const [sortKey, setSortKey] = useState<SortKey>("profit")
+	const [sortDirection, setSortDirection] = useState<SortDirection>("desc")
 
 	async function loadData() {
 		try {
@@ -75,6 +98,81 @@ export default function ProfitableCraftsPage() {
 		} finally {
 			setLoading(false)
 		}
+	}
+
+	async function handleSelectItem(itemId: number) {
+		try {
+			setDetailLoading(true)
+			setDetailError(null)
+
+			const detail = await fetchProfitDetail(itemId)
+			setSelectedItem(detail)
+		} catch (err) {
+			if (err instanceof Error) {
+				setDetailError(err.message)
+			} else {
+				setDetailError("Unknown error occurred.")
+			}
+		} finally {
+			setDetailLoading(false)
+		}
+	}
+
+	function handleSort(nextKey: SortKey) {
+		if (sortKey === nextKey) {
+			setSortDirection((current) => (current === "asc" ? "desc" : "asc"))
+			return
+		}
+
+		setSortKey(nextKey)
+		setSortDirection("desc")
+	}
+
+	const sortedRows = useMemo(() => {
+		const copied = [...rows]
+
+		copied.sort((a, b) => {
+			let comparison = 0
+
+			switch (sortKey) {
+				case "name":
+					comparison = a.name.localeCompare(b.name)
+					break
+				case "craft_cost":
+					comparison = a.craft_cost - b.craft_cost
+					break
+				case "sell_price":
+					comparison = a.sell_price - b.sell_price
+					break
+				case "net_sale":
+					comparison = a.net_sale - b.net_sale
+					break
+				case "profit":
+					comparison = a.profit - b.profit
+					break
+				case "roi":
+					comparison = (a.roi ?? -Infinity) - (b.roi ?? -Infinity)
+					break
+				case "buy_quantity":
+					comparison = a.buy_quantity - b.buy_quantity
+					break
+				case "sell_quantity":
+					comparison = a.sell_quantity - b.sell_quantity
+					break
+			}
+
+			return sortDirection === "asc" ? comparison : -comparison
+		})
+
+		return copied
+	}, [rows, sortDirection, sortKey])
+
+	function sortLabel(label: string, key: SortKey): string {
+		if (sortKey !== key) {
+			return label
+		}
+
+		return `${label} ${sortDirection === "asc" ? "▲" : "▼"}`
 	}
 
 	useEffect(() => {
@@ -181,31 +279,81 @@ export default function ProfitableCraftsPage() {
 						<Table size="small">
 							<TableHead>
 								<TableRow>
-									<TableCell>Name</TableCell>
+									<TableCell
+										onClick={() => handleSort("name")}
+										sx={{ cursor: "pointer", userSelect: "none" }}
+									>
+										{sortLabel("Name", "name")}
+									</TableCell>
 									<TableCell>Disciplines</TableCell>
-									<TableCell align="right">Craft Cost</TableCell>
-									<TableCell align="right">Sell Price</TableCell>
-									<TableCell align="right">Net Sale</TableCell>
-									<TableCell align="right">Profit</TableCell>
-									<TableCell align="right">ROI</TableCell>
-									<TableCell align="right">Buy Qty</TableCell>
-									<TableCell align="right">Sell Qty</TableCell>
+									<TableCell
+										align="right"
+										onClick={() => handleSort("craft_cost")}
+										sx={{ cursor: "pointer", userSelect: "none" }}
+									>
+										{sortLabel("Craft Cost", "craft_cost")}
+									</TableCell>
+									<TableCell
+										align="right"
+										onClick={() => handleSort("sell_price")}
+										sx={{ cursor: "pointer", userSelect: "none" }}
+									>
+										{sortLabel("Sell Price", "sell_price")}
+									</TableCell>
+									<TableCell
+										align="right"
+										onClick={() => handleSort("net_sale")}
+										sx={{ cursor: "pointer", userSelect: "none" }}
+									>
+										{sortLabel("Net Sale", "net_sale")}
+									</TableCell>
+									<TableCell
+										align="right"
+										onClick={() => handleSort("profit")}
+										sx={{ cursor: "pointer", userSelect: "none" }}
+									>
+										{sortLabel("Profit", "profit")}
+									</TableCell>
+									<TableCell
+										align="right"
+										onClick={() => handleSort("roi")}
+										sx={{ cursor: "pointer", userSelect: "none" }}
+									>
+										{sortLabel("ROI", "roi")}
+									</TableCell>
+									<TableCell
+										align="right"
+										onClick={() => handleSort("buy_quantity")}
+										sx={{ cursor: "pointer", userSelect: "none" }}
+									>
+										{sortLabel("Buy Qty", "buy_quantity")}
+									</TableCell>
+									<TableCell
+										align="right"
+										onClick={() => handleSort("sell_quantity")}
+										sx={{ cursor: "pointer", userSelect: "none" }}
+									>
+										{sortLabel("Sell Qty", "sell_quantity")}
+									</TableCell>
 								</TableRow>
 							</TableHead>
 							<TableBody>
-								{rows.map((row) => (
-									<TableRow key={row.item_id}>
+								{sortedRows.map((row) => (
+									<TableRow
+										key={row.item_id}
+										hover
+										onClick={() => void handleSelectItem(row.item_id)}
+										sx={{ cursor: "pointer" }}
+									>
 										<TableCell>{row.name}</TableCell>
 										<TableCell>{row.disciplines.join(", ")}</TableCell>
-										<TableCell align="right">{row.craft_cost.toLocaleString()}</TableCell>
-										<TableCell align="right">{row.sell_price.toLocaleString()}</TableCell>
-										<TableCell align="right">{row.net_sale.toLocaleString()}</TableCell>
-										<TableCell align="right">{row.profit.toLocaleString()}</TableCell>
-										<TableCell align="right">
-											{row.roi !== null ? row.roi.toFixed(4) : "-"}
-										</TableCell>
-										<TableCell align="right">{row.buy_quantity.toLocaleString()}</TableCell>
-										<TableCell align="right">{row.sell_quantity.toLocaleString()}</TableCell>
+										<TableCell align="right">{formatCoins(row.craft_cost)}</TableCell>
+										<TableCell align="right">{formatCoins(row.sell_price)}</TableCell>
+										<TableCell align="right">{formatCoins(row.net_sale)}</TableCell>
+										<TableCell align="right">{formatCoins(row.profit)}</TableCell>
+										<TableCell align="right">{formatPercent(row.roi)}</TableCell>
+										<TableCell align="right">{formatNumber(row.buy_quantity)}</TableCell>
+										<TableCell align="right">{formatNumber(row.sell_quantity)}</TableCell>
 									</TableRow>
 								))}
 							</TableBody>
@@ -213,6 +361,90 @@ export default function ProfitableCraftsPage() {
 					</TableContainer>
 				)}
 			</Stack>
+
+			<Drawer
+				anchor="right"
+				open={selectedItem !== null || detailLoading || detailError !== null}
+				onClose={() => {
+					setSelectedItem(null)
+					setDetailError(null)
+				}}
+				PaperProps={{
+					sx: {
+						width: "min(900px, 90vw)",
+					},
+				}}
+			>
+				<Box sx={{ p: 3, height: "100%", overflow: "auto" }}>
+					{detailLoading && (
+						<Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
+							<CircularProgress />
+						</Box>
+					)}
+
+					{detailError && <Alert severity="error">{detailError}</Alert>}
+
+					{selectedItem && !detailLoading && (
+						<Stack spacing={2}>
+							<Box>
+								<Typography variant="h5">{selectedItem.name}</Typography>
+								<Typography variant="body2" color="text.secondary">
+									{selectedItem.disciplines.join(", ")}
+								</Typography>
+							</Box>
+
+							<Divider />
+
+							<Stack spacing={1}>
+								<Typography><strong>Craft Cost:</strong> {formatCoins(selectedItem.craft_cost)}</Typography>
+								<Typography><strong>Sell Price:</strong> {formatCoins(selectedItem.sell_price)}</Typography>
+								<Typography><strong>Net Sale:</strong> {formatCoins(selectedItem.net_sale)}</Typography>
+								<Typography><strong>Profit:</strong> {formatCoins(selectedItem.profit)}</Typography>
+								<Typography><strong>ROI:</strong> {formatPercent(selectedItem.roi)}</Typography>
+								<Typography><strong>Buy Quantity:</strong> {formatNumber(selectedItem.buy_quantity)}</Typography>
+								<Typography><strong>Sell Quantity:</strong> {formatNumber(selectedItem.sell_quantity)}</Typography>
+							</Stack>
+
+							<Divider />
+
+							<Box>
+								<Typography variant="h6" gutterBottom>
+									Ingredients
+								</Typography>
+
+								<TableContainer component={Paper} variant="outlined">
+									<Table size="small">
+										<TableHead>
+											<TableRow>
+												<TableCell>Name</TableCell>
+												<TableCell align="right">Count</TableCell>
+												<TableCell align="right">Buy Price</TableCell>
+												<TableCell align="right">Craft Price</TableCell>
+												<TableCell>Source</TableCell>
+												<TableCell align="right">Chosen Unit</TableCell>
+												<TableCell align="right">Total</TableCell>
+											</TableRow>
+										</TableHead>
+										<TableBody>
+											{selectedItem.ingredients?.map((ingredient) => (
+												<TableRow key={ingredient.item_id}>
+													<TableCell>{ingredient.name}</TableCell>
+													<TableCell align="right">{formatNumber(ingredient.count)}</TableCell>
+													<TableCell align="right">{formatCoins(ingredient.buy_price)}</TableCell>
+													<TableCell align="right">{formatCoins(ingredient.craft_price)}</TableCell>
+													<TableCell>{ingredient.chosen_source}</TableCell>
+													<TableCell align="right">{formatCoins(ingredient.chosen_unit_cost)}</TableCell>
+													<TableCell align="right">{formatCoins(ingredient.total_cost)}</TableCell>
+												</TableRow>
+											))}
+										</TableBody>
+									</Table>
+								</TableContainer>
+							</Box>
+						</Stack>
+					)}
+				</Box>
+			</Drawer>
 		</Box>
 	)
 }

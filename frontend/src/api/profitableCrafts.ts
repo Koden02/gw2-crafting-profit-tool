@@ -1,7 +1,19 @@
+export type IngredientBreakdown = {
+	item_id: number
+	name: string
+	count: number
+	buy_price: number | null
+	craft_price: number | null
+	chosen_source: string
+	chosen_unit_cost: number | null
+	total_cost: number | null
+}
+
 export type ProfitableCraft = {
 	item_id: number
 	name: string
 	disciplines: string[]
+	output_item_count?: number
 	craft_cost: number
 	buy_price: number | null
 	buy_quantity: number
@@ -14,6 +26,7 @@ export type ProfitableCraft = {
 	spread_ratio: number | null
 	low_liquidity: boolean
 	suspicious_spread: boolean
+	ingredients?: IngredientBreakdown[]
 }
 
 export type ProfitableCraftQuery = {
@@ -49,6 +62,16 @@ export async function fetchProfitableCrafts(
 
 	if (!response.ok) {
 		throw new Error(`Failed to fetch profitable crafts: ${response.status}`)
+	}
+
+	return response.json()
+}
+
+export async function fetchProfitDetail(itemId: number): Promise<ProfitableCraft> {
+	const response = await fetch(`${API_BASE_URL}/api/profit/${itemId}`)
+
+	if (!response.ok) {
+		throw new Error(`Failed to fetch profit detail: ${response.status}`)
 	}
 
 	return response.json()
