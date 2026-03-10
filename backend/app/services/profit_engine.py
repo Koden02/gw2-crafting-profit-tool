@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -15,18 +16,45 @@ class ProfitEngine:
 		self.db = db
 		self._craft_cost_cache: dict[int, float | None] = {}
 
+		self.items_by_id = {
+			item.id: item
+			for item in self.db.query(Item).all()
+		}
+
+		self.prices_by_item_id = {
+			price.item_id: price
+			for price in self.db.query(CommercePrice).all()
+		}
+
+		self.recipes_by_output_item_id = {
+			recipe.output_item_id: recipe
+			for recipe in self.db.query(Recipe).all()
+		}
+
 	def get_item(self, item_id: int) -> Item | None:
-		return self.db.get(Item, item_id)
+		return self.items_by_id.get(item_id)
+
+	@staticmethod
+	def listing_fee(price: int) -> int:
+		return max(1, math.floor(price * 0.05))
+
+	@staticmethod
+	def exchange_fee(price: int) -> int:
+		return max(1, math.floor(price * 0.10))
+
+	@staticmethod
+	def trading_post_net(price: int) -> int:
+		return price - ProfitEngine.listing_fee(price) - ProfitEngine.exchange_fee(price)
 
 	def get_item_name(self, item_id: int) -> str:
 		item = self.get_item(item_id)
 		return item.name if item else f"Unknown Item {item_id}"
 
 	def get_recipe_for_item(self, item_id: int) -> Recipe | None:
-		return self.db.query(Recipe).filter(Recipe.output_item_id == item_id).first()
+		return self.recipes_by_output_item_id.get(item_id)
 
 	def get_price_row(self, item_id: int) -> CommercePrice | None:
-		return self.db.get(CommercePrice, item_id)
+		return self.prices_by_item_id.get(item_id)
 
 	def get_buy_price(self, item_id: int) -> int | None:
 		price = self.get_price_row(item_id)
@@ -151,7 +179,7 @@ class ProfitEngine:
 		buy_quantity = price_row.buy_quantity or 0
 		sell_quantity = price_row.sell_quantity or 0
 
-		net_sale = sell_price * 0.85
+		net_sale = self.trading_post_net(sell_price)
 		profit = net_sale - craft_cost
 		roi = profit / craft_cost if craft_cost > 0 else None
 
@@ -168,11 +196,30 @@ class ProfitEngine:
 		recipe = self.get_recipe_for_item(item_id)
 		disciplines: list[str] = []
 		output_item_count = 1
+		ingredient_sale_total = 0.0
+
+		if recipe:
+			for ingredient in recipe.ingredients:
+				ingredient_sell_price = self.get_sell_price(ingredient.item_id)
+
+				if ingredient_sell_price is None:
+					continue
+
+				ingredient_net = self.trading_post_net(ingredient_sell_price)
+				ingredient_sale_total += ingredient_net * ingredient.count
 
 		if recipe is not None:
 			disciplines = self.parse_disciplines(recipe.disciplines)
 			output_item_count = recipe.output_item_count
 
+		crafted_value_total = net_sale * output_item_count
+		value_add = crafted_value_total - ingredient_sale_total
+		if value_add > 0:
+			recommendation = "Craft"
+		elif value_add < 0:
+			recommendation = "Sell Ingredients"
+		else:
+			recommendation = "Break Even"  
 		return {
 			"item_id": item_id,
 			"name": self.get_item_name(item_id),
@@ -191,6 +238,10 @@ class ProfitEngine:
 			"low_liquidity": low_liquidity,
 			"suspicious_spread": suspicious_spread,
 			"ingredients": self.build_ingredient_breakdown(item_id),
+			"ingredient_sale_value": round(ingredient_sale_total, 2),
+			"value_add": round(value_add, 2),
+			"recommendation": recommendation,
+   			"crafted_item_value": round(crafted_value_total, 2),
 		}
 
 	def calculate_profit_table(
@@ -240,7 +291,6 @@ class ProfitEngine:
 					continue
 
 			results.append(result)
-
 		results.sort(key=lambda row: row["profit"], reverse=True)
 
 		return results[:limit]
