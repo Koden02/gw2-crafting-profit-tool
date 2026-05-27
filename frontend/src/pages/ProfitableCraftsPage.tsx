@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
 	Alert,
 	Box,
 	Button,
 	Checkbox,
+	Chip,
 	CircularProgress,
 	Divider,
 	Drawer,
@@ -17,18 +18,23 @@ import {
 	TableContainer,
 	TableHead,
 	TableRow,
+	TableSortLabel,
 	TextField,
 	Typography,
 } from "@mui/material"
 
 import {
 	fetchProfitDetail,
+	fetchProfitScenarios,
 	fetchProfitableCrafts,
+	fetchSyncStatus,
 	type MaterialPricingMode,
 	type OutputPricingMode,
+	type ProfitScenario,
 	type ProfitableCraft,
+	type SyncStatus,
 } from "../api/profitableCrafts"
-import { formatCoins, formatNumber, formatPercent } from "../utils/formatting"
+import { formatCoins, formatDateTime, formatNumber, formatPercent } from "../utils/formatting"
 
 const disciplineOptions = [
 	"",
@@ -43,11 +49,64 @@ const disciplineOptions = [
 	"Weaponsmith",
 ]
 
+const accentColor = "#a56f2c"
+const warmPanel = "#fffdf8"
+const tableHeaderBackground = "#f1e2cb"
+const tableStripeBackground = "rgba(165, 111, 44, 0.055)"
+const tableHoverBackground = "rgba(165, 111, 44, 0.14)"
+
+const tableHeaderCellSx = {
+	bgcolor: tableHeaderBackground,
+	color: "#352515",
+	fontWeight: 800,
+	borderBottom: "1px solid rgba(98, 63, 24, 0.24)",
+	whiteSpace: "nowrap",
+}
+
+const stickyNameHeaderSx = {
+	...tableHeaderCellSx,
+	left: 0,
+	minWidth: 220,
+	position: "sticky",
+	top: 0,
+	zIndex: 5,
+}
+
+const stickyNameCellSx = {
+	bgcolor: "inherit",
+	fontWeight: 650,
+	left: 0,
+	maxWidth: 280,
+	minWidth: 220,
+	position: "sticky",
+	zIndex: 2,
+}
+
+const zebraRowSx = {
+	"&:nth-of-type(odd)": {
+		bgcolor: tableStripeBackground,
+	},
+	"&.MuiTableRow-hover:hover": {
+		bgcolor: `${tableHoverBackground} !important`,
+	},
+}
+
+const compactMetricSx = {
+	border: "1px solid rgba(98, 63, 24, 0.14)",
+	borderRadius: 2,
+	bgcolor: "rgba(255, 255, 255, 0.72)",
+	p: 1.25,
+}
+
 type SortKey =
 	| "name"
 	| "craft_cost"
 	| "sell_price"
 	| "net_sale"
+	| "ingredient_sale_value"
+	| "crafted_item_value"
+	| "value_add"
+	| "recommendation"
 	| "profit"
 	| "roi"
 	| "buy_quantity"
@@ -59,8 +118,11 @@ export default function ProfitableCraftsPage() {
 	const [rows, setRows] = useState<ProfitableCraft[]>([])
 	const [loading, setLoading] = useState(false)
 	const [error, setError] = useState<string | null>(null)
+	const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null)
+	const [lastLoadedAt, setLastLoadedAt] = useState<Date | null>(null)
 
 	const [selectedItem, setSelectedItem] = useState<ProfitableCraft | null>(null)
+	const [scenarioRows, setScenarioRows] = useState<ProfitScenario[]>([])
 	const [detailLoading, setDetailLoading] = useState(false)
 	const [detailError, setDetailError] = useState<string | null>(null)
 
@@ -71,31 +133,38 @@ export default function ProfitableCraftsPage() {
 	const [excludeLowLiquidity, setExcludeLowLiquidity] = useState(true)
 	const [excludeSuspiciousSpread, setExcludeSuspiciousSpread] = useState(true)
 	const [discipline, setDiscipline] = useState("")
+	const [itemNameSearch, setItemNameSearch] = useState("")
 
 	const [sortKey, setSortKey] = useState<SortKey>("profit")
 	const [sortDirection, setSortDirection] = useState<SortDirection>("desc")
 
-    const [materialPricing, setMaterialPricing] = useState<MaterialPricingMode>("buy")
-    const [outputPricing, setOutputPricing] = useState<OutputPricingMode>("sell")
+	const [materialPricing, setMaterialPricing] = useState<MaterialPricingMode>("buy")
+	const [outputPricing, setOutputPricing] = useState<OutputPricingMode>("sell")
+	const hasLoadedInitialData = useRef(false)
 
-	async function loadData() {
+	const loadData = useCallback(async () => {
 		try {
 			setLoading(true)
 			setError(null)
 
-			const data = await fetchProfitableCrafts({
-				limit,
-				min_profit: minProfit,
-				min_buy_quantity: minBuyQuantity,
-				min_sell_quantity: minSellQuantity,
-				exclude_low_liquidity: excludeLowLiquidity,
-				exclude_suspicious_spread: excludeSuspiciousSpread,
-				discipline: discipline || undefined,
-                material_pricing: materialPricing,
-                output_pricing: outputPricing,
-			})
+			const [data, status] = await Promise.all([
+				fetchProfitableCrafts({
+					limit,
+					min_profit: minProfit,
+					min_buy_quantity: minBuyQuantity,
+					min_sell_quantity: minSellQuantity,
+					exclude_low_liquidity: excludeLowLiquidity,
+					exclude_suspicious_spread: excludeSuspiciousSpread,
+					discipline: discipline || undefined,
+					material_pricing: materialPricing,
+					output_pricing: outputPricing,
+				}),
+				fetchSyncStatus().catch(() => null),
+			])
 
 			setRows(data)
+			setSyncStatus(status)
+			setLastLoadedAt(new Date())
 		} catch (err) {
 			if (err instanceof Error) {
 				setError(err.message)
@@ -105,18 +174,33 @@ export default function ProfitableCraftsPage() {
 		} finally {
 			setLoading(false)
 		}
-	}
+	}, [
+		discipline,
+		excludeLowLiquidity,
+		excludeSuspiciousSpread,
+		limit,
+		materialPricing,
+		minBuyQuantity,
+		minProfit,
+		minSellQuantity,
+		outputPricing,
+	])
 
 	async function handleSelectItem(itemId: number) {
 		try {
 			setDetailLoading(true)
 			setDetailError(null)
+			setScenarioRows([])
 
-			const detail = await fetchProfitDetail(itemId, {
-                material_pricing: materialPricing,
-                output_pricing: outputPricing,
-            })
+			const [detail, scenarios] = await Promise.all([
+				fetchProfitDetail(itemId, {
+					material_pricing: materialPricing,
+					output_pricing: outputPricing,
+				}),
+				fetchProfitScenarios(itemId),
+			])
 			setSelectedItem(detail)
+			setScenarioRows(scenarios)
 		} catch (err) {
 			if (err instanceof Error) {
 				setDetailError(err.message)
@@ -138,8 +222,137 @@ export default function ProfitableCraftsPage() {
 		setSortDirection("desc")
 	}
 
+	function valueAddColor(value: number): string {
+		return signedValueColor(value)
+	}
+
+	function recommendationChipColor(recommendation: string): "success" | "error" | "default" {
+		if (recommendation === "Craft") {
+			return "success"
+		}
+
+		if (recommendation === "Sell Ingredients") {
+			return "error"
+		}
+
+		return "default"
+	}
+
+	function signedValueColor(value: number): string {
+		if (value > 0) {
+			return "success.main"
+		}
+
+		if (value < 0) {
+			return "error.main"
+		}
+
+		return "text.primary"
+	}
+
+	function roiColor(value: number | null): string {
+		if (value === null) {
+			return "text.secondary"
+		}
+
+		if (value < 0) {
+			return "error.main"
+		}
+
+		if (value >= 0.25) {
+			return "success.main"
+		}
+
+		return "text.secondary"
+	}
+
+	function roiFontWeight(value: number | null): number {
+		if (value !== null && value >= 0.25) {
+			return 800
+		}
+
+		if (value !== null && value < 0) {
+			return 700
+		}
+
+		return 500
+	}
+
+	function recommendationBannerBackground(recommendation: string): string {
+		if (recommendation === "Craft") {
+			return "linear-gradient(135deg, rgba(46, 125, 50, 0.13), rgba(255, 253, 248, 0.96))"
+		}
+
+		if (recommendation === "Sell Ingredients") {
+			return "linear-gradient(135deg, rgba(211, 47, 47, 0.13), rgba(255, 253, 248, 0.96))"
+		}
+
+		return "linear-gradient(135deg, rgba(165, 111, 44, 0.13), rgba(255, 253, 248, 0.96))"
+	}
+
+	function RecommendationChip({ recommendation }: { recommendation: string }) {
+		return (
+			<Chip
+				label={recommendation}
+				color={recommendationChipColor(recommendation)}
+				size="small"
+				variant={recommendation === "Break Even" ? "outlined" : "filled"}
+				sx={{ fontWeight: 800 }}
+			/>
+		)
+	}
+
+	function materialPricingLabel(mode: MaterialPricingMode): string {
+		return mode === "buy" ? "Buy Order" : "Instant Buy"
+	}
+
+	function outputPricingLabel(mode: OutputPricingMode): string {
+		return mode === "sell" ? "List Sell" : "Instant Sell"
+	}
+
+	function SortableHeader({
+		align = "left",
+		label,
+		sortKey: nextSortKey,
+		sx,
+	}: {
+		align?: "left" | "right"
+		label: string
+		sortKey: SortKey
+		sx?: object
+	}) {
+		return (
+			<TableCell align={align} sx={{ ...tableHeaderCellSx, ...sx }}>
+				<TableSortLabel
+					active={sortKey === nextSortKey}
+					direction={sortKey === nextSortKey ? sortDirection : "asc"}
+					onClick={() => handleSort(nextSortKey)}
+					sx={{
+						color: "inherit !important",
+						fontWeight: "inherit",
+						"& .MuiTableSortLabel-icon": {
+							color: "inherit !important",
+						},
+					}}
+				>
+					{label}
+				</TableSortLabel>
+			</TableCell>
+		)
+	}
+
+	const filteredRows = useMemo(() => {
+		const normalizedSearch = itemNameSearch.trim().toLowerCase()
+
+		if (!normalizedSearch) {
+			return rows
+		}
+
+		return rows.filter((row) => row.name.toLowerCase().includes(normalizedSearch))
+	}, [itemNameSearch, rows])
+
 	const sortedRows = useMemo(() => {
-		const copied = [...rows]
+		const copied = [...filteredRows]
 
 		copied.sort((a, b) => {
 			let comparison = 0
@@ -156,6 +369,18 @@ export default function ProfitableCraftsPage() {
 					break
 				case "net_sale":
 					comparison = a.net_sale - b.net_sale
+					break
+				case "ingredient_sale_value":
+					comparison = a.ingredient_sale_value - b.ingredient_sale_value
+					break
+				case "crafted_item_value":
+					comparison = a.crafted_item_value - b.crafted_item_value
+					break
+				case "value_add":
+					comparison = a.value_add - b.value_add
+					break
+				case "recommendation":
+					comparison = a.recommendation.localeCompare(b.recommendation)
 					break
 				case "profit":
 					comparison = a.profit - b.profit
@@ -175,25 +400,87 @@ export default function ProfitableCraftsPage() {
 		})
 
 		return copied
-	}, [rows, sortDirection, sortKey])
+	}, [filteredRows, sortDirection, sortKey])
 
-	function sortLabel(label: string, key: SortKey): string {
-		if (sortKey !== key) {
-			return label
+	const summaryHighlights = useMemo(() => {
+		if (filteredRows.length === 0) {
+			return []
 		}
 
-		return `${label} ${sortDirection === "asc" ? "▲" : "▼"}`
-	}
+		const topProfit = filteredRows.reduce((best, row) => (row.profit > best.profit ? row : best), filteredRows[0])
+		const bestValueAdd = filteredRows.reduce((best, row) => (row.value_add > best.value_add ? row : best), filteredRows[0])
+		const highestRoi = filteredRows.reduce<ProfitableCraft | null>((best, row) => {
+			if (row.roi === null) {
+				return best
+			}
+
+			if (best === null || row.roi > (best.roi ?? -Infinity)) {
+				return row
+			}
+
+			return best
+		}, null)
+
+		const highlights: Array<{
+			label: string
+			name: string
+			value: number
+			formattedValue: string
+			valueKind: "currency" | "roi"
+		}> = [
+			{
+				label: "Top Profit",
+				name: topProfit.name,
+				value: topProfit.profit,
+				formattedValue: formatCoins(topProfit.profit),
+				valueKind: "currency" as const,
+			},
+			{
+				label: "Best Value Add",
+				name: bestValueAdd.name,
+				value: bestValueAdd.value_add,
+				formattedValue: formatCoins(bestValueAdd.value_add),
+				valueKind: "currency" as const,
+			},
+		]
+
+		if (highestRoi !== null) {
+			highlights.push({
+				label: "Highest ROI",
+				name: highestRoi.name,
+				value: highestRoi.roi ?? 0,
+				formattedValue: formatPercent(highestRoi.roi),
+				valueKind: "roi" as const,
+			})
+		}
+
+		return highlights
+	}, [filteredRows])
 
 	useEffect(() => {
+		if (hasLoadedInitialData.current) {
+			return
+		}
+
+		hasLoadedInitialData.current = true
 		void loadData()
-	}, [])
+	}, [loadData])
 
 	return (
-		<Box sx={{ p: 3 }}>
+		<Box
+			sx={{
+				bgcolor: "#f6f1e8",
+				minHeight: "100vh",
+				p: 3,
+			}}
+		>
 			<Stack spacing={3}>
 				<Box>
-					<Typography variant="h4" gutterBottom>
+					<Typography
+						variant="h4"
+						gutterBottom
+						sx={{ color: "#2f261b", fontWeight: 800 }}
+					>
 						Profitable Crafts
 					</Typography>
 					<Typography variant="body1" color="text.secondary">
@@ -201,8 +488,24 @@ export default function ProfitableCraftsPage() {
 					</Typography>
 				</Box>
 
-				<Paper sx={{ p: 2 }}>
-					<Stack direction={{ xs: "column", md: "row" }} spacing={2} flexWrap="wrap">
+				<Paper
+					elevation={2}
+					sx={{
+						bgcolor: warmPanel,
+						border: "1px solid rgba(98, 63, 24, 0.12)",
+						borderLeft: `4px solid ${accentColor}`,
+						borderRadius: 2,
+						p: 2.25,
+					}}
+				>
+					<Stack spacing={2}>
+						<Typography
+							variant="subtitle2"
+							sx={{ color: "#5a3d1f", fontWeight: 800, textTransform: "uppercase" }}
+						>
+							Filters
+						</Typography>
+						<Stack direction={{ xs: "column", md: "row" }} spacing={2} flexWrap="wrap" useFlexGap>
 						<TextField
 							label="Limit"
 							type="number"
@@ -250,6 +553,15 @@ export default function ProfitableCraftsPage() {
 							))}
 						</TextField>
 
+						<TextField
+							label="Search Item Name"
+							value={itemNameSearch}
+							onChange={(e) => setItemNameSearch(e.target.value)}
+							placeholder="Partial name"
+							size="small"
+							sx={{ minWidth: 240 }}
+						/>
+
 						<FormControlLabel
 							control={
 								<Checkbox
@@ -270,33 +582,65 @@ export default function ProfitableCraftsPage() {
 							label="Exclude Suspicious Spread"
 						/>
 
-                        <TextField
-                            select
-                            label="Material Pricing"
-                            value={materialPricing}
-                            onChange={(e) => setMaterialPricing(e.target.value as MaterialPricingMode)}
-                            size="small"
-                            sx={{ minWidth: 180 }}
-                        >
-                            <MenuItem value="buy">Buy Order</MenuItem>
-                            <MenuItem value="sell">Instant Buy</MenuItem>
-                        </TextField>
+						<TextField
+							select
+							label="Material Pricing"
+							value={materialPricing}
+							onChange={(e) => setMaterialPricing(e.target.value as MaterialPricingMode)}
+							size="small"
+							sx={{ minWidth: 180 }}
+						>
+							<MenuItem value="buy">Buy Order</MenuItem>
+							<MenuItem value="sell">Instant Buy</MenuItem>
+						</TextField>
 
-                        <TextField
-                            select
-                            label="Output Pricing"
-                            value={outputPricing}
-                            onChange={(e) => setOutputPricing(e.target.value as OutputPricingMode)}
-                            size="small"
-                            sx={{ minWidth: 180 }}
-                        >
-                            <MenuItem value="sell">List Sell</MenuItem>
-                            <MenuItem value="buy">Instant Sell</MenuItem>
-                        </TextField>
-                        
-						<Button variant="contained" onClick={() => void loadData()}>
+						<TextField
+							select
+							label="Output Pricing"
+							value={outputPricing}
+							onChange={(e) => setOutputPricing(e.target.value as OutputPricingMode)}
+							size="small"
+							sx={{ minWidth: 180 }}
+						>
+							<MenuItem value="sell">List Sell</MenuItem>
+							<MenuItem value="buy">Instant Sell</MenuItem>
+						</TextField>
+
+						<Button
+							variant="contained"
+							onClick={() => void loadData()}
+							sx={{
+								bgcolor: accentColor,
+								minHeight: 40,
+								"&:hover": {
+									bgcolor: "#8d5e25",
+								},
+							}}
+						>
 							Refresh
 						</Button>
+						</Stack>
+						<Stack
+							direction={{ xs: "column", sm: "row" }}
+							spacing={1}
+							sx={{ color: "text.secondary" }}
+						>
+							<Typography variant="caption">
+								TP prices synced: {formatDateTime(syncStatus?.price_last_updated)}
+							</Typography>
+							<Typography variant="caption">
+								Loaded: {formatDateTime(lastLoadedAt)}
+							</Typography>
+							<Typography variant="caption">
+								Showing {formatNumber(sortedRows.length)} of {formatNumber(rows.length)} loaded crafts
+							</Typography>
+							{syncStatus && (
+								<Typography variant="caption">
+									Cache: {formatNumber(syncStatus.item_count)} items, {formatNumber(syncStatus.recipe_count)} recipes,{" "}
+									{formatNumber(syncStatus.price_count)} prices
+								</Typography>
+							)}
+						</Stack>
 					</Stack>
 				</Paper>
 
@@ -308,67 +652,92 @@ export default function ProfitableCraftsPage() {
 
 				{error && <Alert severity="error">{error}</Alert>}
 
+				{!loading && !error && summaryHighlights.length > 0 && (
+					<Box
+						sx={{
+							display: "grid",
+							gap: 2,
+							gridTemplateColumns: {
+								xs: "1fr",
+								md: "repeat(3, minmax(0, 1fr))",
+							},
+						}}
+					>
+						{summaryHighlights.map((highlight) => (
+							<Paper
+								key={highlight.label}
+								elevation={1}
+								sx={{
+									bgcolor: warmPanel,
+									border: "1px solid rgba(98, 63, 24, 0.12)",
+									borderRadius: 2,
+									p: 2,
+								}}
+							>
+								<Typography variant="caption" sx={{ color: "#6b4b25", fontWeight: 800 }}>
+									{highlight.label}
+								</Typography>
+								<Typography
+									variant="h6"
+									sx={{
+										color:
+											highlight.valueKind === "roi"
+												? roiColor(highlight.value)
+												: signedValueColor(highlight.value),
+										fontWeight: 850,
+										mt: 0.25,
+									}}
+								>
+									{highlight.formattedValue}
+								</Typography>
+								<Typography
+									variant="body2"
+									color="text.secondary"
+									noWrap
+									title={highlight.name}
+								>
+									{highlight.name}
+								</Typography>
+							</Paper>
+						))}
+					</Box>
+				)}
+
 				{!loading && !error && (
-					<TableContainer component={Paper}>
-						<Table size="small">
+					<TableContainer
+						component={Paper}
+						elevation={2}
+						sx={{
+							bgcolor: warmPanel,
+							border: "1px solid rgba(98, 63, 24, 0.12)",
+							borderRadius: 2,
+							maxHeight: "calc(100vh - 360px)",
+						}}
+					>
+						<Table stickyHeader size="small" sx={{ minWidth: 1400 }}>
 							<TableHead>
 								<TableRow>
-									<TableCell
-										onClick={() => handleSort("name")}
-										sx={{ cursor: "pointer", userSelect: "none" }}
-									>
-										{sortLabel("Name", "name")}
-									</TableCell>
-									<TableCell>Disciplines</TableCell>
-									<TableCell
+									<SortableHeader label="Name" sortKey="name" sx={stickyNameHeaderSx} />
+									<TableCell sx={tableHeaderCellSx}>Disciplines</TableCell>
+									<SortableHeader align="right" label="Craft Cost" sortKey="craft_cost" />
+									<SortableHeader align="right" label="Sell Price" sortKey="sell_price" />
+									<SortableHeader align="right" label="Net Sale" sortKey="net_sale" />
+									<SortableHeader
 										align="right"
-										onClick={() => handleSort("craft_cost")}
-										sx={{ cursor: "pointer", userSelect: "none" }}
-									>
-										{sortLabel("Craft Cost", "craft_cost")}
-									</TableCell>
-									<TableCell
+										label="Ingredient Value"
+										sortKey="ingredient_sale_value"
+									/>
+									<SortableHeader
 										align="right"
-										onClick={() => handleSort("sell_price")}
-										sx={{ cursor: "pointer", userSelect: "none" }}
-									>
-										{sortLabel("Sell Price", "sell_price")}
-									</TableCell>
-									<TableCell
-										align="right"
-										onClick={() => handleSort("net_sale")}
-										sx={{ cursor: "pointer", userSelect: "none" }}
-									>
-										{sortLabel("Net Sale", "net_sale")}
-									</TableCell>
-									<TableCell
-										align="right"
-										onClick={() => handleSort("profit")}
-										sx={{ cursor: "pointer", userSelect: "none" }}
-									>
-										{sortLabel("Profit", "profit")}
-									</TableCell>
-									<TableCell
-										align="right"
-										onClick={() => handleSort("roi")}
-										sx={{ cursor: "pointer", userSelect: "none" }}
-									>
-										{sortLabel("ROI", "roi")}
-									</TableCell>
-									<TableCell
-										align="right"
-										onClick={() => handleSort("buy_quantity")}
-										sx={{ cursor: "pointer", userSelect: "none" }}
-									>
-										{sortLabel("Buy Qty", "buy_quantity")}
-									</TableCell>
-									<TableCell
-										align="right"
-										onClick={() => handleSort("sell_quantity")}
-										sx={{ cursor: "pointer", userSelect: "none" }}
-									>
-										{sortLabel("Sell Qty", "sell_quantity")}
-									</TableCell>
+										label="Crafted Value"
+										sortKey="crafted_item_value"
+									/>
+									<SortableHeader align="right" label="Value Add" sortKey="value_add" />
+									<SortableHeader label="Recommendation" sortKey="recommendation" />
+									<SortableHeader align="right" label="Profit" sortKey="profit" />
+									<SortableHeader align="right" label="ROI" sortKey="roi" />
+									<SortableHeader align="right" label="Buy Qty" sortKey="buy_quantity" />
+									<SortableHeader align="right" label="Sell Qty" sortKey="sell_quantity" />
 								</TableRow>
 							</TableHead>
 							<TableBody>
@@ -377,15 +746,36 @@ export default function ProfitableCraftsPage() {
 										key={row.item_id}
 										hover
 										onClick={() => void handleSelectItem(row.item_id)}
-										sx={{ cursor: "pointer" }}
+										sx={{ ...zebraRowSx, cursor: "pointer" }}
 									>
-										<TableCell>{row.name}</TableCell>
+										<TableCell sx={stickyNameCellSx}>{row.name}</TableCell>
 										<TableCell>{row.disciplines.join(", ")}</TableCell>
 										<TableCell align="right">{formatCoins(row.craft_cost)}</TableCell>
 										<TableCell align="right">{formatCoins(row.sell_price)}</TableCell>
 										<TableCell align="right">{formatCoins(row.net_sale)}</TableCell>
-										<TableCell align="right">{formatCoins(row.profit)}</TableCell>
-										<TableCell align="right">{formatPercent(row.roi)}</TableCell>
+										<TableCell align="right">{formatCoins(row.ingredient_sale_value)}</TableCell>
+										<TableCell align="right">{formatCoins(row.crafted_item_value)}</TableCell>
+										<TableCell
+											align="right"
+											sx={{ color: valueAddColor(row.value_add), fontWeight: 700 }}
+										>
+											{formatCoins(row.value_add)}
+										</TableCell>
+										<TableCell>
+											<RecommendationChip recommendation={row.recommendation} />
+										</TableCell>
+										<TableCell
+											align="right"
+											sx={{ color: signedValueColor(row.profit), fontWeight: 700 }}
+										>
+											{formatCoins(row.profit)}
+										</TableCell>
+										<TableCell
+											align="right"
+											sx={{ color: roiColor(row.roi), fontWeight: roiFontWeight(row.roi) }}
+										>
+											{formatPercent(row.roi)}
+										</TableCell>
 										<TableCell align="right">{formatNumber(row.buy_quantity)}</TableCell>
 										<TableCell align="right">{formatNumber(row.sell_quantity)}</TableCell>
 									</TableRow>
@@ -401,11 +791,13 @@ export default function ProfitableCraftsPage() {
 				open={selectedItem !== null || detailLoading || detailError !== null}
 				onClose={() => {
 					setSelectedItem(null)
+					setScenarioRows([])
 					setDetailError(null)
 				}}
 				PaperProps={{
 					sx: {
-						width: "min(900px, 90vw)",
+						bgcolor: "#f8f2e8",
+						width: "min(980px, 92vw)",
 					},
 				}}
 			>
@@ -419,49 +811,215 @@ export default function ProfitableCraftsPage() {
 					{detailError && <Alert severity="error">{detailError}</Alert>}
 
 					{selectedItem && !detailLoading && (
-						<Stack spacing={2}>
+						<Stack spacing={2.5}>
 							<Box>
-								<Typography variant="h5">{selectedItem.name}</Typography>
+								<Typography variant="h5" sx={{ color: "#2f261b", fontWeight: 850 }}>
+									{selectedItem.name}
+								</Typography>
 								<Typography variant="body2" color="text.secondary">
 									{selectedItem.disciplines.join(", ")}
 								</Typography>
 							</Box>
 
-							<Divider />
+							<Paper
+								variant="outlined"
+								sx={{
+									background: recommendationBannerBackground(selectedItem.recommendation),
+									borderColor: "rgba(98, 63, 24, 0.16)",
+									borderRadius: 2,
+									p: 2,
+								}}
+							>
+								<Stack
+									direction={{ xs: "column", sm: "row" }}
+									justifyContent="space-between"
+									spacing={2}
+								>
+									<Stack spacing={0.75}>
+										<Typography variant="caption" sx={{ color: "#6b4b25", fontWeight: 800 }}>
+											Current Recommendation
+										</Typography>
+										<RecommendationChip recommendation={selectedItem.recommendation} />
+									</Stack>
 
-							<Stack spacing={1}>
-								<Typography><strong>Craft Cost:</strong> {formatCoins(selectedItem.craft_cost)}</Typography>
-								<Typography><strong>Sell Price:</strong> {formatCoins(selectedItem.sell_price)}</Typography>
-								<Typography><strong>Net Sale:</strong> {formatCoins(selectedItem.net_sale)}</Typography>
-								<Typography><strong>Profit:</strong> {formatCoins(selectedItem.profit)}</Typography>
-								<Typography><strong>ROI:</strong> {formatPercent(selectedItem.roi)}</Typography>
-								<Typography><strong>Buy Quantity:</strong> {formatNumber(selectedItem.buy_quantity)}</Typography>
-								<Typography><strong>Sell Quantity:</strong> {formatNumber(selectedItem.sell_quantity)}</Typography>
-							</Stack>
+									<Stack direction={{ xs: "column", sm: "row" }} spacing={3}>
+										<Box>
+											<Typography variant="caption" color="text.secondary">
+												Value Add
+											</Typography>
+											<Typography
+												variant="h6"
+												sx={{ color: valueAddColor(selectedItem.value_add), fontWeight: 850 }}
+											>
+												{formatCoins(selectedItem.value_add)}
+											</Typography>
+										</Box>
+										<Box>
+											<Typography variant="caption" color="text.secondary">
+												Profit
+											</Typography>
+											<Typography
+												variant="h6"
+												sx={{ color: signedValueColor(selectedItem.profit), fontWeight: 850 }}
+											>
+												{formatCoins(selectedItem.profit)}
+											</Typography>
+										</Box>
+										<Box>
+											<Typography variant="caption" color="text.secondary">
+												ROI
+											</Typography>
+											<Typography
+												variant="h6"
+												sx={{ color: roiColor(selectedItem.roi), fontWeight: roiFontWeight(selectedItem.roi) }}
+											>
+												{formatPercent(selectedItem.roi)}
+											</Typography>
+										</Box>
+									</Stack>
+								</Stack>
+							</Paper>
+
+							<Box
+								sx={{
+									display: "grid",
+									gap: 1.25,
+									gridTemplateColumns: {
+										xs: "1fr",
+										sm: "repeat(2, minmax(0, 1fr))",
+										md: "repeat(4, minmax(0, 1fr))",
+									},
+								}}
+							>
+								<Box sx={compactMetricSx}>
+									<Typography variant="caption" color="text.secondary">Craft Cost</Typography>
+									<Typography sx={{ fontWeight: 750 }}>{formatCoins(selectedItem.craft_cost)}</Typography>
+								</Box>
+								<Box sx={compactMetricSx}>
+									<Typography variant="caption" color="text.secondary">Sell Price</Typography>
+									<Typography sx={{ fontWeight: 750 }}>{formatCoins(selectedItem.sell_price)}</Typography>
+								</Box>
+								<Box sx={compactMetricSx}>
+									<Typography variant="caption" color="text.secondary">Net Sale</Typography>
+									<Typography sx={{ fontWeight: 750 }}>{formatCoins(selectedItem.net_sale)}</Typography>
+								</Box>
+								<Box sx={compactMetricSx}>
+									<Typography variant="caption" color="text.secondary">Ingredient Value</Typography>
+									<Typography sx={{ fontWeight: 750 }}>
+										{formatCoins(selectedItem.ingredient_sale_value)}
+									</Typography>
+								</Box>
+								<Box sx={compactMetricSx}>
+									<Typography variant="caption" color="text.secondary">Crafted Value</Typography>
+									<Typography sx={{ fontWeight: 750 }}>
+										{formatCoins(selectedItem.crafted_item_value)}
+									</Typography>
+								</Box>
+								<Box sx={compactMetricSx}>
+									<Typography variant="caption" color="text.secondary">Buy Quantity</Typography>
+									<Typography sx={{ fontWeight: 750 }}>{formatNumber(selectedItem.buy_quantity)}</Typography>
+								</Box>
+								<Box sx={compactMetricSx}>
+									<Typography variant="caption" color="text.secondary">Sell Quantity</Typography>
+									<Typography sx={{ fontWeight: 750 }}>{formatNumber(selectedItem.sell_quantity)}</Typography>
+								</Box>
+							</Box>
 
 							<Divider />
 
 							<Box>
-								<Typography variant="h6" gutterBottom>
+								<Typography variant="h6" gutterBottom sx={{ color: "#3d2d1c", fontWeight: 800 }}>
+									Scenario Comparison
+								</Typography>
+
+								<TableContainer
+									component={Paper}
+									variant="outlined"
+									sx={{ borderColor: "rgba(98, 63, 24, 0.14)", maxHeight: 320 }}
+								>
+									<Table stickyHeader size="small" sx={{ minWidth: 1000 }}>
+										<TableHead>
+											<TableRow>
+												<TableCell sx={tableHeaderCellSx}>Materials</TableCell>
+												<TableCell sx={tableHeaderCellSx}>Output</TableCell>
+												<TableCell align="right" sx={tableHeaderCellSx}>Craft Cost</TableCell>
+												<TableCell align="right" sx={tableHeaderCellSx}>Net Sale</TableCell>
+												<TableCell align="right" sx={tableHeaderCellSx}>Profit</TableCell>
+												<TableCell align="right" sx={tableHeaderCellSx}>ROI</TableCell>
+												<TableCell align="right" sx={tableHeaderCellSx}>Ingredient Value</TableCell>
+												<TableCell align="right" sx={tableHeaderCellSx}>Crafted Value</TableCell>
+												<TableCell align="right" sx={tableHeaderCellSx}>Value Add</TableCell>
+												<TableCell sx={tableHeaderCellSx}>Recommendation</TableCell>
+											</TableRow>
+										</TableHead>
+										<TableBody>
+											{scenarioRows.map((scenario) => (
+												<TableRow
+													key={`${scenario.material_pricing}-${scenario.output_pricing}`}
+													hover
+													sx={zebraRowSx}
+												>
+													<TableCell>{materialPricingLabel(scenario.material_pricing)}</TableCell>
+													<TableCell>{outputPricingLabel(scenario.output_pricing)}</TableCell>
+													<TableCell align="right">{formatCoins(scenario.craft_cost)}</TableCell>
+													<TableCell align="right">{formatCoins(scenario.net_sale)}</TableCell>
+													<TableCell
+														align="right"
+														sx={{ color: signedValueColor(scenario.profit), fontWeight: 700 }}
+													>
+														{formatCoins(scenario.profit)}
+													</TableCell>
+													<TableCell
+														align="right"
+														sx={{ color: roiColor(scenario.roi), fontWeight: roiFontWeight(scenario.roi) }}
+													>
+														{formatPercent(scenario.roi)}
+													</TableCell>
+													<TableCell align="right">{formatCoins(scenario.ingredient_sale_value)}</TableCell>
+													<TableCell align="right">{formatCoins(scenario.crafted_item_value)}</TableCell>
+													<TableCell
+														align="right"
+														sx={{ color: valueAddColor(scenario.value_add), fontWeight: 700 }}
+													>
+														{formatCoins(scenario.value_add)}
+													</TableCell>
+													<TableCell>
+														<RecommendationChip recommendation={scenario.recommendation} />
+													</TableCell>
+												</TableRow>
+											))}
+										</TableBody>
+									</Table>
+								</TableContainer>
+							</Box>
+
+							<Divider />
+
+							<Box>
+								<Typography variant="h6" gutterBottom sx={{ color: "#3d2d1c", fontWeight: 800 }}>
 									Ingredients
 								</Typography>
 
-								<TableContainer component={Paper} variant="outlined">
-									<Table size="small">
+								<TableContainer
+									component={Paper}
+									variant="outlined"
+									sx={{ borderColor: "rgba(98, 63, 24, 0.14)", maxHeight: 360 }}
+								>
+									<Table stickyHeader size="small">
 										<TableHead>
 											<TableRow>
-												<TableCell>Name</TableCell>
-												<TableCell align="right">Count</TableCell>
-												<TableCell align="right">Buy Price</TableCell>
-												<TableCell align="right">Craft Price</TableCell>
-												<TableCell>Source</TableCell>
-												<TableCell align="right">Chosen Unit</TableCell>
-												<TableCell align="right">Total</TableCell>
+												<TableCell sx={tableHeaderCellSx}>Name</TableCell>
+												<TableCell align="right" sx={tableHeaderCellSx}>Count</TableCell>
+												<TableCell align="right" sx={tableHeaderCellSx}>Buy Price</TableCell>
+												<TableCell align="right" sx={tableHeaderCellSx}>Craft Price</TableCell>
+												<TableCell sx={tableHeaderCellSx}>Source</TableCell>
+												<TableCell align="right" sx={tableHeaderCellSx}>Chosen Unit</TableCell>
+												<TableCell align="right" sx={tableHeaderCellSx}>Total</TableCell>
 											</TableRow>
 										</TableHead>
 										<TableBody>
 											{selectedItem.ingredients?.map((ingredient) => (
-												<TableRow key={ingredient.item_id}>
+												<TableRow key={ingredient.item_id} hover sx={zebraRowSx}>
 													<TableCell>{ingredient.name}</TableCell>
 													<TableCell align="right">{formatNumber(ingredient.count)}</TableCell>
 													<TableCell align="right">{formatCoins(ingredient.buy_price)}</TableCell>

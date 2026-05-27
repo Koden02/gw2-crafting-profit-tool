@@ -1,373 +1,251 @@
 # GW2 Craft Profit Tool
+
 ![Python](https://img.shields.io/badge/python-3.11-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-backend-green)
 ![React](https://img.shields.io/badge/React-frontend-blue)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
+![Status](https://img.shields.io/badge/status-early%20development-orange)
+![Version](https://img.shields.io/badge/version-0.1.0-blue)
 
-![Status](https://img.shields.io/badge/status-in%20development-orange) ![Version](https://img.shields.io/badge/version-0.1.0-blue)
+GW2 Craft Profit Tool is a local full-stack app for analyzing Guild Wars 2 crafting profitability using the official Guild Wars 2 API, SQLite, recursive recipe costing, and Trading Post prices.
 
-⚠️ Project Status: Early Development (v0.1.0)
+Project status: Early Development v0.1.0.
 
-The backend data pipeline and profit calculation engine are implemented.
-The frontend interface and additional analysis features are still in progress.
+The v0.1.0 release is focused on local data sync, craft profitability analysis, pricing assumptions, and a usable frontend for browsing profitable crafts. Inventory-aware crafting, historical pricing, listing-depth analysis, and packaging are planned future work.
 
-A local tool for analyzing **Guild Wars 2 crafting profitability** using live Trading Post data and recursive craft cost evaluation.
+## Implemented Features
 
-This project replicates and expands on the functionality of the now-defunct **gw2profits** website by calculating which items are profitable to craft and sell on the Trading Post.
+- Backend data sync for items, recipes, and Trading Post commerce prices.
+- SQLite cache for items, recipes, recipe ingredients, and commerce prices.
+- Recursive craft-cost calculation.
+- Trading Post fee handling.
+- Profitable crafts endpoint with filters.
+- Pricing strategy modes:
+  - `material_pricing=buy`: value materials at buy-order prices.
+  - `material_pricing=sell`: value materials at instant-buy prices.
+  - `output_pricing=sell`: value crafted output at list-sell prices.
+  - `output_pricing=buy`: value crafted output at instant-sell prices.
+- Liquidity and suspicious spread filters.
+- Craft vs sell ingredients comparison:
+  - `ingredient_sale_value`
+  - `crafted_item_value`
+  - `value_add`
+  - `recommendation`
+- Scenario comparison for the four pricing mode combinations.
+- React/MUI frontend with:
+  - profitable crafts table
+  - filtering
+  - sorting
+  - item name search over currently loaded rows
+  - sync status visibility
+  - summary cards
+  - formatted coin values
+  - recommendation chips
+  - item detail drawer
+  - ingredient breakdown
 
-The application runs **entirely locally**, using the official Guild Wars 2 API to retrieve game data and market prices.
+## Tech Stack
 
----
-
-# Features
-
-Current MVP goals:
-
-- Calculate profitable crafting opportunities
-- Recursively evaluate crafting ingredient costs
-- Compare craft cost vs Trading Post sale value
-- Apply Trading Post fees automatically
-- Display results in a sortable UI
-- Show ingredient breakdown for any craftable item
-
-Planned features:
-
-- Inventory-aware crafting (using GW2 API keys)
-- Trading Post liquidity analysis
-- Historical price tracking
-- Shopping list generation
-- Docker distribution
-- Desktop packaging
-
----
-
-# How It Works
-
-The application retrieves data from the official **Guild Wars 2 API**, caches it locally, and calculates crafting profitability.
-
-Architecture overview:
-
-```
-
-React Frontend
-      │
-      ▼
-FastAPI Backend
-      │
-      ▼
-SQLite Database
-      │
-      ▼
-Guild Wars 2 API
-
-```
-
-The backend handles:
-
-- API data synchronization
-- caching game data locally
-- crafting cost calculations
-- profitability analysis
-
-The frontend provides a user interface for browsing profitable crafts.
-
----
-
-# Tech Stack
-
-Backend
+Backend:
 
 - Python
 - FastAPI
 - SQLite
 - SQLAlchemy
-- Pydantic
+- pytest
 
-Frontend
+Frontend:
 
 - React
 - TypeScript
 - Vite
-- Material UI or Tailwind
+- Material UI
 
-## Data Source
+Data source:
 
-This application uses the official Guild Wars 2 API:
+- Official Guild Wars 2 API: https://wiki.guildwars2.com/wiki/API:Main
 
-https://wiki.guildwars2.com/wiki/API:Main
----
+## Project Structure
 
-# Project Structure
-
+```text
+GW2_Profit/
+  backend/
+    app/
+      api/
+      db/
+      models/
+      services/
+      main.py
+    tests/
+    requirements.txt
+  data/
+    gw2_profit.sqlite
+  docs/
+  frontend/
+    src/
+      api/
+      pages/
+      utils/
 ```
-
-gw2-profit-tool
-│
-├ backend
-│   ├ app
-│   │   ├ api
-│   │   ├ services
-│   │   ├ models
-│   │   ├ schemas
-│   │   ├ db
-│   │   └ main.py
-│
-├ frontend
-│   ├ src
-│   ├ components
-│   ├ pages
-│   └ api
-│
-├ docs
-│   ├ PROJECT_PLAN.md
-│   ├ TECHNICAL_SPEC.md
-│   └ IMPLEMENTATION_ORDER.md
-│
-├ data
-│
-└ README.md
-
-```
-
----
-
-# Development Setup
 
 ## Requirements
 
 - Python 3.11+
 - Node.js 18+
-- npm or yarn
+- npm
 
----
+## Backend Setup
 
-# Backend Setup
+From the repository root:
 
-Navigate to the backend folder:
-
-```
-
+```powershell
 cd backend
-
-```
-
-Create a virtual environment:
-
-```
-
 python -m venv venv
-
-```
-
-Activate the environment:
-
-Linux / macOS
-
-```
-
-source venv/bin/activate
-
-```
-
-Windows
-
-```
-
 venv\Scripts\activate
-
-```
-
-Install dependencies:
-
-```
-
 pip install -r requirements.txt
-
 ```
 
-Run the backend server:
+Run the backend:
 
-```
-
+```powershell
 uvicorn app.main:app --reload
-
 ```
 
-Backend will start at:
+Backend URL:
 
+```text
+http://127.0.0.1:8000
 ```
 
-[http://localhost:8000](http://localhost:8000)
+API docs:
 
+```text
+http://127.0.0.1:8000/docs
 ```
 
-API docs available at:
+## Frontend Setup
 
-```
+From the repository root:
 
-[http://localhost:8000/docs](http://localhost:8000/docs)
-
-```
-
----
-
-# Frontend Setup
-
-Navigate to the frontend folder:
-
-```
-
+```powershell
 cd frontend
-
-```
-
-Install dependencies:
-
-```
-
 npm install
-
-```
-
-Run the development server:
-
-```
-
 npm run dev
-
 ```
 
-Frontend will start at:
+Frontend URL:
 
+```text
+http://127.0.0.1:5173
 ```
 
-[http://localhost:5173](http://localhost:5173)
+Vite may choose a later port if 5173 is already in use.
 
+## Data Synchronization
+
+The app caches Guild Wars 2 API data in `data/gw2_profit.sqlite`.
+
+Recommended first sync order:
+
+```powershell
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/sync/items
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/sync/recipes
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/sync/prices
 ```
 
----
+After the first full sync, prices are the main dataset to refresh:
 
-# Data Synchronization
-
-The application caches GW2 API data locally.
-
-Manual sync endpoints:
-
+```powershell
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/sync/prices
 ```
 
-POST /api/sync/items
-POST /api/sync/recipes
-POST /api/sync/prices
+Check local cache status:
 
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/api/sync/status
 ```
 
-Typical workflow:
+## Profit Model
 
-1. Sync items and recipes once
-2. Refresh prices periodically
+The core profit model is:
 
----
-
-# Profit Calculation
-
-Profit is calculated using the formula:
-
-```
-
-net_sale = sell_price * 0.85
+```text
+net_sale = output_price - listing_fee - exchange_fee
 profit = net_sale - craft_cost
 roi = profit / craft_cost
-
 ```
 
-The system recursively evaluates crafting dependencies and chooses the cheapest option:
+Craft cost is recursive. For each ingredient, the engine chooses the cheaper available path between buying the ingredient and crafting the ingredient.
 
+The craft vs sell ingredients comparison answers a separate question:
+
+```text
+value_add = crafted_item_value - ingredient_sale_value
 ```
 
-ingredient_cost = min(buy_price, craft_cost)
+Recommendation values:
 
+- `Craft`: crafted output is worth more than selling the ingredients.
+- `Sell Ingredients`: selling the ingredients is worth more than crafting the output.
+- `Break Even`: both paths are equal under the selected pricing assumptions.
+
+## Development Checks
+
+Run backend tests:
+
+```powershell
+cd backend
+venv\Scripts\python.exe -m pytest
 ```
 
-Memoization is used to avoid recalculating ingredient costs repeatedly.
+Compile-check backend Python:
 
----
-
-# Documentation
-
-Project documentation can be found in the `/docs` directory.
-
-| File | Description |
-|-----|-------------|
-| PROJECT_PLAN.md | High-level project goals |
-| TECHNICAL_SPEC.md | Database schema and algorithms |
-| IMPLEMENTATION_ORDER.md | Step-by-step build order |
-
-These documents serve as the **source of truth for the project architecture**.
-
----
-
-# Development Roadmap
-
-Phase 1  
-Backend data pipeline
-
-Phase 2  
-Profit calculation engine
-
-Phase 3  
-Frontend profitable crafts interface
-
-Phase 4  
-UI improvements and stability
-
-Phase 5  
-Shareable distribution
-
-Estimated timeline for MVP:
-
+```powershell
+cd backend
+venv\Scripts\python.exe -m compileall app
 ```
 
-2–3 weeks
+Build frontend:
 
+```powershell
+cd frontend
+npm run build
 ```
 
----
+Lint frontend:
 
-# Future Improvements
+```powershell
+cd frontend
+npm run lint
+```
 
-Possible future enhancements include:
+## Current Limitations
 
-- inventory-aware crafting
-- Trading Post listing depth analysis
-- historical price analysis
-- profit stability scoring
-- crafting shopping lists
-- desktop application packaging
+Not implemented in v0.1.0:
 
----
+- Inventory-aware crafting.
+- Trading Post listing-depth analysis.
+- Historical price charts.
+- Price stability scoring.
+- Shopping lists.
+- Docker or packaged desktop distribution.
 
-# Contributing
+## Documentation
 
-Contributions are welcome.
+Additional planning docs are in `docs/`:
 
-If you would like to contribute:
+- `PROJECT_PLAN.md`
+- `TECHNICAL_SPEC.md`
+- `IMPLEMENTATION_ORDER.md`
 
-1. fork the repository
-2. create a feature branch
-3. submit a pull request
-
----
-
-# Disclaimer
+## Disclaimer
 
 This project is not affiliated with or endorsed by ArenaNet.
 
-Guild Wars 2 and all related assets are property of ArenaNet.
+Guild Wars 2 and related assets are property of ArenaNet.
 
 The application uses the official Guild Wars 2 public API.
 
----
+## License
 
-# License
-
-MIT License
+MIT License.

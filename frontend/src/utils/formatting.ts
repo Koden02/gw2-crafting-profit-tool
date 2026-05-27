@@ -19,7 +19,9 @@ export function formatCoins(value: number | null | undefined): string {
 		return "-"
 	}
 
-	const copper = Math.round(value)
+	const roundedCopper = Math.round(value)
+	const sign = roundedCopper < 0 ? "-" : ""
+	const copper = Math.abs(roundedCopper)
 	const gold = Math.floor(copper / 10000)
 	const silver = Math.floor((copper % 10000) / 100)
 	const remainderCopper = copper % 100
@@ -36,5 +38,19 @@ export function formatCoins(value: number | null | undefined): string {
 
 	parts.push(`${remainderCopper}c`)
 
-	return parts.join(" ")
+	return `${sign}${parts.join(" ")}`
+}
+
+export function formatDateTime(value: string | number | Date | null | undefined): string {
+	if (value === null || value === undefined) {
+		return "-"
+	}
+
+	const date = new Date(value)
+
+	if (Number.isNaN(date.getTime())) {
+		return String(value)
+	}
+
+	return date.toLocaleString()
 }

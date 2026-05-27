@@ -14,7 +14,7 @@ from app.models.recipe import Recipe
 class ProfitEngine:
 	def __init__(self, db: Session) -> None:
 		self.db = db
-		self._craft_cost_cache: dict[int, float | None] = {}
+		self._craft_cost_cache: dict[tuple[int, str], float | None] = {}
 
 		self.items_by_id = {
 			item.id: item
@@ -86,14 +86,16 @@ class ProfitEngine:
 		item_id: int,
 		material_pricing: str = "buy"
 	) -> float | None:
-		if item_id in self._craft_cost_cache:
-			return self._craft_cost_cache[item_id]
+		cache_key = (item_id, material_pricing)
+
+		if cache_key in self._craft_cost_cache:
+			return self._craft_cost_cache[cache_key]
 
 		recipe = self.get_recipe_for_item(item_id)
 		if recipe is None:
-			buy_price = self.get_buy_price(item_id)
-			self._craft_cost_cache[item_id] = float(buy_price) if buy_price is not None else None
-			return self._craft_cost_cache[item_id]
+			market_price = self.get_buy_price(item_id) if material_pricing == "buy" else self.get_sell_price(item_id)
+			self._craft_cost_cache[cache_key] = float(market_price) if market_price is not None else None
+			return self._craft_cost_cache[cache_key]
 
 		total_cost = 0.0
 
@@ -107,7 +109,7 @@ class ProfitEngine:
 
 			options = [price for price in [market_price, craft_price] if price is not None]
 			if not options:
-				self._craft_cost_cache[item_id] = None
+				self._craft_cost_cache[cache_key] = None
 				return None
 
 			ingredient_unit_cost = min(options)
@@ -116,7 +118,7 @@ class ProfitEngine:
 		if recipe.output_item_count > 0:
 			total_cost = total_cost / recipe.output_item_count
 
-		self._craft_cost_cache[item_id] = total_cost
+		self._craft_cost_cache[cache_key] = total_cost
 		return total_cost
 
 	def build_ingredient_breakdown(self, item_id: int) -> list[dict[str, Any]]:

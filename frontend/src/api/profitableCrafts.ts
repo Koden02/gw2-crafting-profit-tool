@@ -26,11 +26,27 @@ export type ProfitableCraft = {
 	spread_ratio: number | null
 	low_liquidity: boolean
 	suspicious_spread: boolean
+	ingredient_sale_value: number
+	crafted_item_value: number
+	value_add: number
+	recommendation: string
 	ingredients?: IngredientBreakdown[]
 }
 
 export type MaterialPricingMode = "buy" | "sell"
 export type OutputPricingMode = "buy" | "sell"
+
+export type ProfitScenario = ProfitableCraft & {
+	material_pricing: MaterialPricingMode
+	output_pricing: OutputPricingMode
+}
+
+export type SyncStatus = {
+	price_last_updated: string | null
+	price_count: number
+	item_count: number
+	recipe_count: number
+}
 
 export type ProfitableCraftQuery = {
 	limit?: number
@@ -96,6 +112,26 @@ export async function fetchProfitDetail(
 
 	if (!response.ok) {
 		throw new Error(`Failed to fetch profit detail: ${response.status}`)
+	}
+
+	return response.json()
+}
+
+export async function fetchProfitScenarios(itemId: number): Promise<ProfitScenario[]> {
+	const response = await fetch(`${API_BASE_URL}/api/profit/${itemId}/scenarios`)
+
+	if (!response.ok) {
+		throw new Error(`Failed to fetch profit scenarios: ${response.status}`)
+	}
+
+	return response.json()
+}
+
+export async function fetchSyncStatus(): Promise<SyncStatus> {
+	const response = await fetch(`${API_BASE_URL}/api/sync/status`)
+
+	if (!response.ok) {
+		throw new Error(`Failed to fetch sync status: ${response.status}`)
 	}
 
 	return response.json()
