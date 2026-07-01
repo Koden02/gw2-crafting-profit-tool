@@ -1,3 +1,4 @@
+from app.models.account_holding import AccountHolding
 from app.models.commerce_price import CommercePrice
 from app.models.item import Item
 from app.models.recipe import Recipe

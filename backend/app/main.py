@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.account import router as account_router
 from app.api.debug import router as debug_router
 from app.api.profitable_crafts import router as profitable_crafts_router
 from app.api.profit import router as profit_router
@@ -36,6 +37,7 @@ def health_check() -> dict[str, str]:
 
 
 app.include_router(sync_router)
+app.include_router(account_router)
 app.include_router(debug_router)
 app.include_router(profit_router)
 app.include_router(profitable_crafts_router)

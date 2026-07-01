@@ -24,13 +24,16 @@ import {
 } from "@mui/material"
 
 import {
+	fetchAccountHoldingsStatus,
 	fetchProfitDetail,
 	fetchProfitScenarios,
 	fetchProfitableCrafts,
 	fetchSyncStatus,
+	syncAccountHoldings,
 	syncCommercePrices,
 	syncItems,
 	syncRecipes,
+	type AccountHoldingsStatus,
 	type MaterialPricingMode,
 	type OutputPricingMode,
 	type ProfitScenario,
@@ -58,6 +61,7 @@ const tableHeaderBackground = "#f1e2cb"
 const tableStripeBackground = "rgba(165, 111, 44, 0.055)"
 const tableHoverBackground = "rgba(165, 111, 44, 0.14)"
 const priceDataStaleAfterMs = 60 * 60 * 1000
+const accountApiKeyStorageKey = "gw2-profit-api-key"
 
 const tableHeaderCellSx = {
 	bgcolor: tableHeaderBackground,
@@ -123,6 +127,29 @@ function formatAge(valueMs: number): string {
 	return `${hours} hour${hours === 1 ? "" : "s"} ${minutes} minute${minutes === 1 ? "" : "s"}`
 }
 
+function loadSavedAccountApiKey(): string {
+	if (typeof window === "undefined") {
+		return ""
+	}
+
+	return window.localStorage.getItem(accountApiKeyStorageKey) ?? ""
+}
+
+function saveAccountApiKey(apiKey: string): void {
+	if (typeof window === "undefined") {
+		return
+	}
+
+	const trimmedKey = apiKey.trim()
+
+	if (trimmedKey) {
+		window.localStorage.setItem(accountApiKeyStorageKey, trimmedKey)
+		return
+	}
+
+	window.localStorage.removeItem(accountApiKeyStorageKey)
+}
+
 type SortKey =
 	| "name"
 	| "craft_cost"
@@ -145,11 +172,17 @@ export default function ProfitableCraftsPage() {
 	const [loading, setLoading] = useState(false)
 	const [error, setError] = useState<string | null>(null)
 	const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null)
+	const [accountHoldingsStatus, setAccountHoldingsStatus] = useState<AccountHoldingsStatus | null>(null)
 	const [lastLoadedAt, setLastLoadedAt] = useState<Date | null>(null)
 	const [syncStatusCheckedAt, setSyncStatusCheckedAt] = useState<Date | null>(null)
 	const [syncInProgress, setSyncInProgress] = useState<SyncDataset | null>(null)
 	const [syncError, setSyncError] = useState<string | null>(null)
 	const [syncMessage, setSyncMessage] = useState<string | null>(null)
+	const [accountApiKey, setAccountApiKey] = useState(loadSavedAccountApiKey)
+	const [accountKeySaved, setAccountKeySaved] = useState(() => loadSavedAccountApiKey().trim().length > 0)
+	const [accountSyncing, setAccountSyncing] = useState(false)
+	const [accountSyncError, setAccountSyncError] = useState<string | null>(null)
+	const [accountSyncMessage, setAccountSyncMessage] = useState<string | null>(null)
 
 	const [selectedItem, setSelectedItem] = useState<ProfitableCraft | null>(null)
 	const [scenarioRows, setScenarioRows] = useState<ProfitScenario[]>([])
@@ -177,7 +210,7 @@ export default function ProfitableCraftsPage() {
 			setLoading(true)
 			setError(null)
 
-			const [data, status] = await Promise.all([
+			const [data, status, holdingsStatus] = await Promise.all([
 				fetchProfitableCrafts({
 					limit,
 					min_profit: minProfit,
@@ -190,10 +223,12 @@ export default function ProfitableCraftsPage() {
 					output_pricing: outputPricing,
 				}),
 				fetchSyncStatus().catch(() => null),
+				fetchAccountHoldingsStatus().catch(() => null),
 			])
 
 			setRows(data)
 			setSyncStatus(status)
+			setAccountHoldingsStatus(holdingsStatus)
 			setSyncStatusCheckedAt(status ? new Date() : null)
 			setLastLoadedAt(new Date())
 		} catch (err) {
@@ -283,6 +318,56 @@ export default function ProfitableCraftsPage() {
 			}
 		} finally {
 			setSyncInProgress(null)
+		}
+	}
+
+	function handleSaveAccountApiKey() {
+		saveAccountApiKey(accountApiKey)
+
+		if (accountApiKey.trim()) {
+			setAccountKeySaved(true)
+			setAccountSyncMessage("Saved GW2 API key in this browser.")
+			setAccountSyncError(null)
+			return
+		}
+
+		setAccountKeySaved(false)
+		setAccountSyncMessage("Cleared local GW2 API key.")
+		setAccountSyncError(null)
+	}
+
+	async function handleAccountHoldingsSync() {
+		const apiKey = accountApiKey.trim()
+
+		if (!apiKey) {
+			setAccountSyncError("Enter a GW2 API key before syncing account holdings.")
+			setAccountSyncMessage(null)
+			return
+		}
+
+		try {
+			setAccountSyncing(true)
+			setAccountSyncError(null)
+			setAccountSyncMessage(null)
+
+			const result = await syncAccountHoldings(apiKey)
+			setAccountSyncMessage(
+				`Synced ${formatNumber(result.unique_items)} account item holdings across material storage and bank.`,
+			)
+			const selectedItemId = selectedItem?.item_id
+			await loadData()
+
+			if (selectedItemId !== undefined) {
+				await handleSelectItem(selectedItemId)
+			}
+		} catch (err) {
+			if (err instanceof Error) {
+				setAccountSyncError(err.message)
+			} else {
+				setAccountSyncError("Unknown error occurred while syncing account holdings.")
+			}
+		} finally {
+			setAccountSyncing(false)
 		}
 	}
 
@@ -392,7 +477,7 @@ export default function ProfitableCraftsPage() {
 		return (
 			<Button
 				variant={dataset === "prices" ? "contained" : "outlined"}
-				disabled={loading || syncInProgress !== null}
+				disabled={loading || accountSyncing || syncInProgress !== null}
 				onClick={() => void handleDataSync(dataset)}
 				sx={{
 					bgcolor: dataset === "prices" ? accentColor : "transparent",
@@ -672,6 +757,92 @@ export default function ProfitableCraftsPage() {
 								</Typography>
 							)}
 						</Stack>
+
+						<Divider />
+
+						<Stack spacing={1.5}>
+							<Box>
+								<Typography
+									variant="subtitle2"
+									sx={{ color: "#5a3d1f", fontWeight: 800, textTransform: "uppercase" }}
+								>
+									Account Holdings
+								</Typography>
+								<Typography variant="body2" color="text.secondary">
+									Read-only material storage and bank sync requires a GW2 API key with account and inventories permissions.
+								</Typography>
+							</Box>
+
+							<Stack direction={{ xs: "column", md: "row" }} spacing={1.5} flexWrap="wrap" useFlexGap>
+								<TextField
+									label="GW2 API Key"
+									type="password"
+									value={accountApiKey}
+									onChange={(e) => {
+										setAccountApiKey(e.target.value)
+										setAccountKeySaved(false)
+									}}
+									size="small"
+									sx={{ minWidth: { xs: "100%", md: 360 } }}
+								/>
+
+								<Button
+									variant="outlined"
+									disabled={accountSyncing || syncInProgress !== null}
+									onClick={handleSaveAccountApiKey}
+									sx={{
+										borderColor: accentColor,
+										color: accentColor,
+										minHeight: 40,
+										"&:hover": {
+											borderColor: "#8d5e25",
+											bgcolor: "rgba(165, 111, 44, 0.08)",
+										},
+									}}
+								>
+									{accountKeySaved ? "Key Saved" : "Save Key"}
+								</Button>
+
+								<Button
+									variant="contained"
+									disabled={loading || accountSyncing || syncInProgress !== null || !accountApiKey.trim()}
+									onClick={() => void handleAccountHoldingsSync()}
+									sx={{
+										bgcolor: accentColor,
+										minHeight: 40,
+										minWidth: 190,
+										"&:hover": {
+											bgcolor: "#8d5e25",
+										},
+									}}
+								>
+									{accountSyncing ? (
+										<Stack direction="row" spacing={1} alignItems="center">
+											<CircularProgress color="inherit" size={16} />
+											<span>Syncing Holdings</span>
+										</Stack>
+									) : (
+										"Sync Account Holdings"
+									)}
+								</Button>
+							</Stack>
+
+							<Stack
+								direction={{ xs: "column", sm: "row" }}
+								spacing={1}
+								sx={{ color: "text.secondary" }}
+							>
+								<Typography variant="caption">
+									Holdings synced: {formatDateTime(accountHoldingsStatus?.last_updated)}
+								</Typography>
+								{accountHoldingsStatus && (
+									<Typography variant="caption">
+										Account cache: {formatNumber(accountHoldingsStatus.holding_count)} item types,{" "}
+										{formatNumber(accountHoldingsStatus.total_owned)} total owned
+									</Typography>
+								)}
+							</Stack>
+						</Stack>
 					</Stack>
 				</Paper>
 
@@ -795,7 +966,7 @@ export default function ProfitableCraftsPage() {
 
 						<Button
 							variant="contained"
-							disabled={loading || syncInProgress !== null}
+							disabled={loading || accountSyncing || syncInProgress !== null}
 							onClick={() => void loadData()}
 							sx={{
 								bgcolor: accentColor,
@@ -828,6 +999,10 @@ export default function ProfitableCraftsPage() {
 				{syncError && <Alert severity="error">{syncError}</Alert>}
 
 				{syncMessage && <Alert severity="success">{syncMessage}</Alert>}
+
+				{accountSyncError && <Alert severity="error">{accountSyncError}</Alert>}
+
+				{accountSyncMessage && <Alert severity="success">{accountSyncMessage}</Alert>}
 
 				{loading && (
 					<Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
@@ -1195,6 +1370,8 @@ export default function ProfitableCraftsPage() {
 											<TableRow>
 												<TableCell sx={tableHeaderCellSx}>Name</TableCell>
 												<TableCell align="right" sx={tableHeaderCellSx}>Count</TableCell>
+												<TableCell align="right" sx={tableHeaderCellSx}>Owned</TableCell>
+												<TableCell align="right" sx={tableHeaderCellSx}>Missing</TableCell>
 												<TableCell align="right" sx={tableHeaderCellSx}>Buy Price</TableCell>
 												<TableCell align="right" sx={tableHeaderCellSx}>Craft Price</TableCell>
 												<TableCell sx={tableHeaderCellSx}>Source</TableCell>
@@ -1207,6 +1384,16 @@ export default function ProfitableCraftsPage() {
 												<TableRow key={ingredient.item_id} hover sx={zebraRowSx}>
 													<TableCell>{ingredient.name}</TableCell>
 													<TableCell align="right">{formatNumber(ingredient.count)}</TableCell>
+													<TableCell align="right">{formatNumber(ingredient.owned_count)}</TableCell>
+													<TableCell
+														align="right"
+														sx={{
+															color: ingredient.missing_count > 0 ? "warning.main" : "success.main",
+															fontWeight: 700,
+														}}
+													>
+														{formatNumber(ingredient.missing_count)}
+													</TableCell>
 													<TableCell align="right">{formatCoins(ingredient.buy_price)}</TableCell>
 													<TableCell align="right">{formatCoins(ingredient.craft_price)}</TableCell>
 													<TableCell>{ingredient.chosen_source}</TableCell>

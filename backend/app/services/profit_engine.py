@@ -6,6 +6,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.models.account_holding import AccountHolding
 from app.models.commerce_price import CommercePrice
 from app.models.item import Item
 from app.models.recipe import Recipe
@@ -24,6 +25,11 @@ class ProfitEngine:
 		self.prices_by_item_id = {
 			price.item_id: price
 			for price in self.db.query(CommercePrice).all()
+		}
+
+		self.holdings_by_item_id = {
+			holding.item_id: holding
+			for holding in self.db.query(AccountHolding).all()
 		}
 
 		self.recipes_by_output_item_id = {
@@ -55,6 +61,10 @@ class ProfitEngine:
 
 	def get_price_row(self, item_id: int) -> CommercePrice | None:
 		return self.prices_by_item_id.get(item_id)
+
+	def get_owned_count(self, item_id: int) -> int:
+		holding = self.holdings_by_item_id.get(item_id)
+		return holding.total_count if holding is not None else 0
 
 	def get_buy_price(self, item_id: int) -> int | None:
 		price = self.get_price_row(item_id)
@@ -146,11 +156,15 @@ class ProfitEngine:
 				chosen_source, chosen_unit_cost = min(options, key=lambda option: option[1])
 				total_cost = chosen_unit_cost * ingredient.count
 
+			owned_count = self.get_owned_count(ingredient.item_id)
+
 			breakdown.append(
 				{
 					"item_id": ingredient.item_id,
 					"name": self.get_item_name(ingredient.item_id),
 					"count": ingredient.count,
+					"owned_count": owned_count,
+					"missing_count": max(ingredient.count - owned_count, 0),
 					"buy_price": buy_price,
 					"craft_price": round(craft_price, 2) if craft_price is not None else None,
 					"chosen_source": chosen_source,

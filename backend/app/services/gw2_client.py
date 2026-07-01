@@ -10,13 +10,21 @@ class GW2Client:
 		self.base_url = base_url
 		self.timeout = 30.0
 
-	def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
+	def _get(
+		self,
+		path: str,
+		params: dict[str, Any] | None = None,
+		headers: dict[str, str] | None = None,
+	) -> Any:
 		url = f"{self.base_url}{path}"
 
 		with httpx.Client(timeout=self.timeout) as client:
-			response = client.get(url, params=params)
+			response = client.get(url, params=params, headers=headers)
 			response.raise_for_status()
 			return response.json()
+
+	def _auth_headers(self, api_key: str) -> dict[str, str]:
+		return {"Authorization": f"Bearer {api_key}"}
 
 	def fetch_all_item_ids(self) -> list[int]:
 		return self._get("/v2/items")
@@ -47,3 +55,9 @@ class GW2Client:
 
 	def fetch_all_commerce_price_ids(self) -> list[int]:
 		return self._get("/v2/commerce/prices")
+
+	def fetch_account_materials(self, api_key: str) -> list[dict[str, Any]]:
+		return self._get("/v2/account/materials", headers=self._auth_headers(api_key))
+
+	def fetch_account_bank(self, api_key: str) -> list[dict[str, Any] | None]:
+		return self._get("/v2/account/bank", headers=self._auth_headers(api_key))

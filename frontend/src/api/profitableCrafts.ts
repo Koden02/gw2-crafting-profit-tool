@@ -2,6 +2,8 @@ export type IngredientBreakdown = {
 	item_id: number
 	name: string
 	count: number
+	owned_count: number
+	missing_count: number
 	buy_price: number | null
 	craft_price: number | null
 	chosen_source: string
@@ -61,6 +63,21 @@ export type ItemSyncResult = {
 export type RecipeSyncResult = {
 	status: string
 	recipes_upserted: number
+}
+
+export type AccountHoldingsSyncResult = {
+	status: string
+	material_items: number
+	bank_items: number
+	unique_items: number
+	total_owned: number
+	last_updated: string
+}
+
+export type AccountHoldingsStatus = {
+	holding_count: number
+	total_owned: number
+	last_updated: string | null
 }
 
 export type ProfitableCraftQuery = {
@@ -183,6 +200,34 @@ export async function syncRecipes(): Promise<RecipeSyncResult> {
 
 	if (!response.ok) {
 		throw new Error(`Failed to sync recipes: ${response.status}`)
+	}
+
+	return response.json()
+}
+
+export async function syncAccountHoldings(apiKey: string): Promise<AccountHoldingsSyncResult> {
+	const response = await fetch(`${API_BASE_URL}/api/account/sync/holdings`, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify({ api_key: apiKey }),
+	})
+
+	if (!response.ok) {
+		const detail = await response.json().catch(() => null)
+		const message = typeof detail?.detail === "string" ? detail.detail : `Failed to sync account holdings: ${response.status}`
+		throw new Error(message)
+	}
+
+	return response.json()
+}
+
+export async function fetchAccountHoldingsStatus(): Promise<AccountHoldingsStatus> {
+	const response = await fetch(`${API_BASE_URL}/api/account/holdings/status`)
+
+	if (!response.ok) {
+		throw new Error(`Failed to fetch account holdings status: ${response.status}`)
 	}
 
 	return response.json()
