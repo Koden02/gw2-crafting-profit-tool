@@ -48,6 +48,21 @@ export type SyncStatus = {
 	recipe_count: number
 }
 
+export type PriceSyncResult = {
+	status: string
+	prices_upserted: number
+}
+
+export type ItemSyncResult = {
+	status: string
+	items_upserted: number
+}
+
+export type RecipeSyncResult = {
+	status: string
+	recipes_upserted: number
+}
+
 export type ProfitableCraftQuery = {
 	limit?: number
 	min_profit?: number
@@ -132,6 +147,42 @@ export async function fetchSyncStatus(): Promise<SyncStatus> {
 
 	if (!response.ok) {
 		throw new Error(`Failed to fetch sync status: ${response.status}`)
+	}
+
+	return response.json()
+}
+
+export async function syncCommercePrices(): Promise<PriceSyncResult> {
+	const response = await fetch(`${API_BASE_URL}/api/sync/prices`, {
+		method: "POST",
+	})
+
+	if (!response.ok) {
+		throw new Error(`Failed to sync Trading Post prices: ${response.status}`)
+	}
+
+	return response.json()
+}
+
+export async function syncItems(): Promise<ItemSyncResult> {
+	const response = await fetch(`${API_BASE_URL}/api/sync/items`, {
+		method: "POST",
+	})
+
+	if (!response.ok) {
+		throw new Error(`Failed to sync items: ${response.status}`)
+	}
+
+	return response.json()
+}
+
+export async function syncRecipes(): Promise<RecipeSyncResult> {
+	const response = await fetch(`${API_BASE_URL}/api/sync/recipes`, {
+		method: "POST",
+	})
+
+	if (!response.ok) {
+		throw new Error(`Failed to sync recipes: ${response.status}`)
 	}
 
 	return response.json()

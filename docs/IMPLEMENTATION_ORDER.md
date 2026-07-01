@@ -456,7 +456,7 @@ Tasks:
 * create version tag
 
 ```
-v0.1.0
+v0.1.2
 ```
 
 Exit criteria:
@@ -486,15 +486,161 @@ true profit calculation
 
 ---
 
-## Trading Post Listings Analysis
+## v0.2 - Trading Post Order-Book Depth and Sell-Limit Analysis
 
-Use listing depth data to estimate:
+Goal:
+
+Determine how many units of a crafted item can realistically be sold before the market price drops below break-even.
+
+This feature should use the GW2 API listings endpoint:
 
 ```
-optimal batch size
-liquidity risk
-expected sale time
+/v2/commerce/listings
 ```
+
+This is separate from the existing top-level Trading Post price sync from:
+
+```
+/v2/commerce/prices
+```
+
+The existing price data remains useful for quick table scans. Listing depth data should be used when the app needs order-book analysis for selected crafted items.
+
+### Commerce Listings Sync
+
+Required work:
+
+* add GW2 API client support for `/v2/commerce/listings`
+* store or fetch order-book depth data for selected items
+* track buy order levels
+* track sell listing levels
+
+Each order-book level should include:
+
+```
+price
+quantity
+```
+
+Possible implementation options:
+
+* fetch listings on demand for item detail analysis
+* cache listings for recently inspected items
+* later add a dedicated listings sync table if bulk depth scanning becomes necessary
+
+---
+
+### Instant-Sell Profit Depth
+
+Goal:
+
+Calculate how many crafted items can be instant-sold into buy orders before profit reaches zero.
+
+Buy order levels should be processed from highest price to lowest price.
+
+For each buy order level:
+
+```
+net_sale = trading_post_net(buy_order_price)
+profit_per_item = net_sale - craft_cost
+```
+
+Continue consuming order quantities while:
+
+```
+profit_per_item > 0
+```
+
+Stop when the next buy order level is break-even or unprofitable.
+
+Return fields:
+
+```
+break_even_sale_price
+last_profitable_buy_order_price
+instant_sell_limit_quantity
+instant_sell_depth_profit
+profitable_buy_order_levels
+```
+
+Notes:
+
+* `break_even_sale_price` is the minimum gross sale price needed after Trading Post fees to cover craft cost
+* `instant_sell_limit_quantity` is the total buy-order quantity that remains profitable
+* `instant_sell_depth_profit` is the total expected profit if all profitable buy-order depth is consumed
+
+---
+
+### List-Sell Competition Depth
+
+Goal:
+
+Estimate how much existing sell-side competition exists before list-sell pricing reaches an unprofitable price.
+
+Sell listing levels should be processed from lowest price to highest price.
+
+The analysis should compare each sell listing level against the crafted item's break-even price after Trading Post fees.
+
+Return fields:
+
+```
+profitable_listing_price_floor
+existing_competing_sell_quantity
+competing_sell_levels
+estimated_market_pressure
+```
+
+Possible `estimated_market_pressure` labels:
+
+```
+thin market
+healthy market
+dead market
+```
+
+Notes:
+
+* `profitable_listing_price_floor` is the lowest list-sell price that remains profitable after fees
+* `existing_competing_sell_quantity` is the current sell-side quantity competing at profitable prices
+* `competing_sell_levels` should preserve price and quantity for each relevant sell listing level
+* `estimated_market_pressure` should be a simple user-facing warning, not a velocity claim
+
+---
+
+### UI Display Ideas
+
+Possible table additions:
+
+* sell limit column
+* depth profit column
+* break-even price column
+* market depth warning column
+
+Possible detail drawer additions:
+
+* order-book section
+* profitable buy-order levels
+* competing sell listing levels
+* break-even sale price
+* market depth label
+
+Market depth labels can start simple:
+
+```
+thin market
+healthy market
+dead market
+```
+
+---
+
+### Deferred: Historical Velocity
+
+True market velocity requires historical snapshots.
+
+This should remain a later `v0.3+` feature because it requires storing repeated order-book or price snapshots over time.
+
+Do not treat current listing depth as proof that items will sell quickly. The v0.2 feature should estimate current depth and competition only.
 
 ---
 

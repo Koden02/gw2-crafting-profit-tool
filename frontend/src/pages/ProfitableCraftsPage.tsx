@@ -28,6 +28,9 @@ import {
 	fetchProfitScenarios,
 	fetchProfitableCrafts,
 	fetchSyncStatus,
+	syncCommercePrices,
+	syncItems,
+	syncRecipes,
 	type MaterialPricingMode,
 	type OutputPricingMode,
 	type ProfitScenario,
@@ -54,6 +57,7 @@ const warmPanel = "#fffdf8"
 const tableHeaderBackground = "#f1e2cb"
 const tableStripeBackground = "rgba(165, 111, 44, 0.055)"
 const tableHoverBackground = "rgba(165, 111, 44, 0.14)"
+const priceDataStaleAfterMs = 60 * 60 * 1000
 
 const tableHeaderCellSx = {
 	bgcolor: tableHeaderBackground,
@@ -98,6 +102,27 @@ const compactMetricSx = {
 	p: 1.25,
 }
 
+function formatAge(valueMs: number): string {
+	const totalMinutes = Math.max(0, Math.floor(valueMs / 60000))
+
+	if (totalMinutes < 1) {
+		return "less than a minute"
+	}
+
+	if (totalMinutes < 60) {
+		return `${totalMinutes} minute${totalMinutes === 1 ? "" : "s"}`
+	}
+
+	const hours = Math.floor(totalMinutes / 60)
+	const minutes = totalMinutes % 60
+
+	if (minutes === 0) {
+		return `${hours} hour${hours === 1 ? "" : "s"}`
+	}
+
+	return `${hours} hour${hours === 1 ? "" : "s"} ${minutes} minute${minutes === 1 ? "" : "s"}`
+}
+
 type SortKey =
 	| "name"
 	| "craft_cost"
@@ -113,6 +138,7 @@ type SortKey =
 	| "sell_quantity"
 
 type SortDirection = "asc" | "desc"
+type SyncDataset = "prices" | "items" | "recipes"
 
 export default function ProfitableCraftsPage() {
 	const [rows, setRows] = useState<ProfitableCraft[]>([])
@@ -120,6 +146,10 @@ export default function ProfitableCraftsPage() {
 	const [error, setError] = useState<string | null>(null)
 	const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null)
 	const [lastLoadedAt, setLastLoadedAt] = useState<Date | null>(null)
+	const [syncStatusCheckedAt, setSyncStatusCheckedAt] = useState<Date | null>(null)
+	const [syncInProgress, setSyncInProgress] = useState<SyncDataset | null>(null)
+	const [syncError, setSyncError] = useState<string | null>(null)
+	const [syncMessage, setSyncMessage] = useState<string | null>(null)
 
 	const [selectedItem, setSelectedItem] = useState<ProfitableCraft | null>(null)
 	const [scenarioRows, setScenarioRows] = useState<ProfitScenario[]>([])
@@ -164,6 +194,7 @@ export default function ProfitableCraftsPage() {
 
 			setRows(data)
 			setSyncStatus(status)
+			setSyncStatusCheckedAt(status ? new Date() : null)
 			setLastLoadedAt(new Date())
 		} catch (err) {
 			if (err instanceof Error) {
@@ -220,6 +251,39 @@ export default function ProfitableCraftsPage() {
 
 		setSortKey(nextKey)
 		setSortDirection("desc")
+	}
+
+	async function handleDataSync(dataset: SyncDataset) {
+		try {
+			setSyncInProgress(dataset)
+			setSyncError(null)
+			setSyncMessage(null)
+
+			if (dataset === "prices") {
+				const result = await syncCommercePrices()
+				setSyncMessage(`Synced ${formatNumber(result.prices_upserted)} Trading Post price rows.`)
+			}
+
+			if (dataset === "items") {
+				const result = await syncItems()
+				setSyncMessage(`Synced ${formatNumber(result.items_upserted)} item rows.`)
+			}
+
+			if (dataset === "recipes") {
+				const result = await syncRecipes()
+				setSyncMessage(`Synced ${formatNumber(result.recipes_upserted)} recipe rows.`)
+			}
+
+			await loadData()
+		} catch (err) {
+			if (err instanceof Error) {
+				setSyncError(err.message)
+			} else {
+				setSyncError("Unknown error occurred while syncing data.")
+			}
+		} finally {
+			setSyncInProgress(null)
+		}
 	}
 
 	function valueAddColor(value: number): string {
@@ -308,6 +372,50 @@ export default function ProfitableCraftsPage() {
 
 	function outputPricingLabel(mode: OutputPricingMode): string {
 		return mode === "sell" ? "List Sell" : "Instant Sell"
+	}
+
+	function syncLoadingLabel(dataset: SyncDataset): string {
+		if (dataset === "prices") {
+			return "Syncing Prices"
+		}
+
+		if (dataset === "items") {
+			return "Syncing Items"
+		}
+
+		return "Syncing Recipes"
+	}
+
+	function SyncButton({ dataset, label }: { dataset: SyncDataset; label: string }) {
+		const isActive = syncInProgress === dataset
+
+		return (
+			<Button
+				variant={dataset === "prices" ? "contained" : "outlined"}
+				disabled={loading || syncInProgress !== null}
+				onClick={() => void handleDataSync(dataset)}
+				sx={{
+					bgcolor: dataset === "prices" ? accentColor : "transparent",
+					borderColor: accentColor,
+					color: dataset === "prices" ? "#fff" : accentColor,
+					minHeight: 40,
+					minWidth: 150,
+					"&:hover": {
+						bgcolor: dataset === "prices" ? "#8d5e25" : "rgba(165, 111, 44, 0.08)",
+						borderColor: "#8d5e25",
+					},
+				}}
+			>
+				{isActive ? (
+					<Stack direction="row" spacing={1} alignItems="center">
+						<CircularProgress color="inherit" size={16} />
+						<span>{syncLoadingLabel(dataset)}</span>
+					</Stack>
+				) : (
+					label
+				)}
+			</Button>
+		)
 	}
 
 	function SortableHeader({
@@ -457,6 +565,29 @@ export default function ProfitableCraftsPage() {
 		return highlights
 	}, [filteredRows])
 
+	const priceDataWarning = useMemo(() => {
+		if (syncStatus === null) {
+			return null
+		}
+
+		if (syncStatus.price_count === 0 || syncStatus.price_last_updated === null) {
+			return "No Trading Post price cache is available. Sync TP prices before trusting profit results."
+		}
+
+		const priceLastUpdated = new Date(syncStatus.price_last_updated)
+		const priceAgeMs = Date.now() - priceLastUpdated.getTime()
+
+		if (Number.isNaN(priceAgeMs)) {
+			return "Trading Post price sync timestamp could not be read. Sync TP prices before trusting profit results."
+		}
+
+		if (priceAgeMs > priceDataStaleAfterMs) {
+			return `Trading Post prices are ${formatAge(priceAgeMs)} old. Sync TP prices for current profit estimates.`
+		}
+
+		return null
+	}, [syncStatus])
+
 	useEffect(() => {
 		if (hasLoadedInitialData.current) {
 			return
@@ -487,6 +618,62 @@ export default function ProfitableCraftsPage() {
 						Explore profitable Guild Wars 2 crafting opportunities using live Trading Post data.
 					</Typography>
 				</Box>
+
+				<Paper
+					elevation={2}
+					sx={{
+						bgcolor: warmPanel,
+						border: "1px solid rgba(98, 63, 24, 0.12)",
+						borderLeft: `4px solid ${accentColor}`,
+						borderRadius: 2,
+						p: 2.25,
+					}}
+				>
+					<Stack spacing={2}>
+						<Stack
+							direction={{ xs: "column", md: "row" }}
+							justifyContent="space-between"
+							spacing={1}
+						>
+							<Box>
+								<Typography
+									variant="subtitle2"
+									sx={{ color: "#5a3d1f", fontWeight: 800, textTransform: "uppercase" }}
+								>
+									Data Sync
+								</Typography>
+								<Typography variant="body2" color="text.secondary">
+									Items and recipes are slower full-data syncs. Prices are the usual refresh before evaluating profit.
+								</Typography>
+							</Box>
+						</Stack>
+
+						<Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} flexWrap="wrap" useFlexGap>
+							<SyncButton dataset="prices" label="Sync Prices" />
+							<SyncButton dataset="items" label="Sync Items" />
+							<SyncButton dataset="recipes" label="Sync Recipes" />
+						</Stack>
+
+						<Stack
+							direction={{ xs: "column", sm: "row" }}
+							spacing={1}
+							sx={{ color: "text.secondary" }}
+						>
+							<Typography variant="caption">
+								TP prices synced: {formatDateTime(syncStatus?.price_last_updated)}
+							</Typography>
+							<Typography variant="caption">
+								Status checked: {formatDateTime(syncStatusCheckedAt)}
+							</Typography>
+							{syncStatus && (
+								<Typography variant="caption">
+									Cache: {formatNumber(syncStatus.item_count)} items, {formatNumber(syncStatus.recipe_count)} recipes,{" "}
+									{formatNumber(syncStatus.price_count)} prices
+								</Typography>
+							)}
+						</Stack>
+					</Stack>
+				</Paper>
 
 				<Paper
 					elevation={2}
@@ -608,6 +795,7 @@ export default function ProfitableCraftsPage() {
 
 						<Button
 							variant="contained"
+							disabled={loading || syncInProgress !== null}
 							onClick={() => void loadData()}
 							sx={{
 								bgcolor: accentColor,
@@ -617,7 +805,7 @@ export default function ProfitableCraftsPage() {
 								},
 							}}
 						>
-							Refresh
+							Refresh Results
 						</Button>
 						</Stack>
 						<Stack
@@ -626,23 +814,20 @@ export default function ProfitableCraftsPage() {
 							sx={{ color: "text.secondary" }}
 						>
 							<Typography variant="caption">
-								TP prices synced: {formatDateTime(syncStatus?.price_last_updated)}
-							</Typography>
-							<Typography variant="caption">
 								Loaded: {formatDateTime(lastLoadedAt)}
 							</Typography>
 							<Typography variant="caption">
 								Showing {formatNumber(sortedRows.length)} of {formatNumber(rows.length)} loaded crafts
 							</Typography>
-							{syncStatus && (
-								<Typography variant="caption">
-									Cache: {formatNumber(syncStatus.item_count)} items, {formatNumber(syncStatus.recipe_count)} recipes,{" "}
-									{formatNumber(syncStatus.price_count)} prices
-								</Typography>
-							)}
 						</Stack>
 					</Stack>
 				</Paper>
+
+				{priceDataWarning && <Alert severity="warning">{priceDataWarning}</Alert>}
+
+				{syncError && <Alert severity="error">{syncError}</Alert>}
+
+				{syncMessage && <Alert severity="success">{syncMessage}</Alert>}
 
 				{loading && (
 					<Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
