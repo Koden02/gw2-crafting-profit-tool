@@ -64,6 +64,28 @@ const tableStripeBackground = "rgba(165, 111, 44, 0.055)"
 const tableHoverBackground = "rgba(165, 111, 44, 0.14)"
 const priceDataStaleAfterMs = 60 * 60 * 1000
 const accountApiKeyStorageKey = "gw2-profit-api-key"
+const watchlistStorageKey = "gw2-profit-watchlist"
+const filterPresetsStorageKey = "gw2-profit-filter-presets"
+
+type SavedFilterSettings = {
+	limit: number
+	minProfit: number
+	minBuyQuantity: number
+	minSellQuantity: number
+	excludeLowLiquidity: boolean
+	excludeSuspiciousSpread: boolean
+	discipline: string
+	itemNameSearch: string
+	materialPricing: MaterialPricingMode
+	outputPricing: OutputPricingMode
+	watchlistOnly: boolean
+}
+
+type SavedFilterPreset = {
+	id: string
+	name: string
+	settings: SavedFilterSettings
+}
 
 const tableHeaderCellSx = {
 	bgcolor: tableHeaderBackground,
@@ -150,6 +172,106 @@ function saveAccountApiKey(apiKey: string): void {
 	}
 
 	window.localStorage.removeItem(accountApiKeyStorageKey)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null
+}
+
+function loadSavedWatchlistIds(): number[] {
+	if (typeof window === "undefined") {
+		return []
+	}
+
+	try {
+		const parsed: unknown = JSON.parse(window.localStorage.getItem(watchlistStorageKey) ?? "[]")
+
+		if (!Array.isArray(parsed)) {
+			return []
+		}
+
+		return parsed.filter((value): value is number => Number.isInteger(value))
+	} catch {
+		return []
+	}
+}
+
+function saveWatchlistIds(itemIds: number[]): void {
+	if (typeof window === "undefined") {
+		return
+	}
+
+	window.localStorage.setItem(watchlistStorageKey, JSON.stringify(itemIds))
+}
+
+function isMaterialPricingMode(value: unknown): value is MaterialPricingMode {
+	return value === "buy" || value === "sell"
+}
+
+function isOutputPricingMode(value: unknown): value is OutputPricingMode {
+	return value === "buy" || value === "sell"
+}
+
+function normalizeFilterSettings(value: unknown): SavedFilterSettings | null {
+	if (!isRecord(value)) {
+		return null
+	}
+
+	const materialPricing = isMaterialPricingMode(value.materialPricing) ? value.materialPricing : "buy"
+	const outputPricing = isOutputPricingMode(value.outputPricing) ? value.outputPricing : "sell"
+
+	return {
+		limit: typeof value.limit === "number" ? value.limit : 50,
+		minProfit: typeof value.minProfit === "number" ? value.minProfit : 0,
+		minBuyQuantity: typeof value.minBuyQuantity === "number" ? value.minBuyQuantity : 5,
+		minSellQuantity: typeof value.minSellQuantity === "number" ? value.minSellQuantity : 5,
+		excludeLowLiquidity: typeof value.excludeLowLiquidity === "boolean" ? value.excludeLowLiquidity : true,
+		excludeSuspiciousSpread:
+			typeof value.excludeSuspiciousSpread === "boolean" ? value.excludeSuspiciousSpread : true,
+		discipline: typeof value.discipline === "string" ? value.discipline : "",
+		itemNameSearch: typeof value.itemNameSearch === "string" ? value.itemNameSearch : "",
+		materialPricing,
+		outputPricing,
+		watchlistOnly: typeof value.watchlistOnly === "boolean" ? value.watchlistOnly : false,
+	}
+}
+
+function loadSavedFilterPresets(): SavedFilterPreset[] {
+	if (typeof window === "undefined") {
+		return []
+	}
+
+	try {
+		const parsed: unknown = JSON.parse(window.localStorage.getItem(filterPresetsStorageKey) ?? "[]")
+
+		if (!Array.isArray(parsed)) {
+			return []
+		}
+
+		return parsed.flatMap((value) => {
+			if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string") {
+				return []
+			}
+
+			const settings = normalizeFilterSettings(value.settings)
+
+			if (settings === null) {
+				return []
+			}
+
+			return [{ id: value.id, name: value.name, settings }]
+		})
+	} catch {
+		return []
+	}
+}
+
+function saveFilterPresets(presets: SavedFilterPreset[]): void {
+	if (typeof window === "undefined") {
+		return
+	}
+
+	window.localStorage.setItem(filterPresetsStorageKey, JSON.stringify(presets))
 }
 
 function buildShoppingListCopyText(itemName: string, plan: Omit<ShoppingPlan, "copyText">): string {
@@ -253,6 +375,12 @@ export default function ProfitableCraftsPage() {
 	const [accountSyncing, setAccountSyncing] = useState(false)
 	const [accountSyncError, setAccountSyncError] = useState<string | null>(null)
 	const [accountSyncMessage, setAccountSyncMessage] = useState<string | null>(null)
+	const [watchlistIds, setWatchlistIds] = useState(loadSavedWatchlistIds)
+	const [watchlistOnly, setWatchlistOnly] = useState(false)
+	const [filterPresets, setFilterPresets] = useState(loadSavedFilterPresets)
+	const [filterPresetName, setFilterPresetName] = useState("")
+	const [selectedFilterPresetId, setSelectedFilterPresetId] = useState("")
+	const [filterPresetMessage, setFilterPresetMessage] = useState<string | null>(null)
 
 	const [selectedItem, setSelectedItem] = useState<ProfitableCraft | null>(null)
 	const [scenarioRows, setScenarioRows] = useState<ProfitScenario[]>([])
@@ -278,6 +406,24 @@ export default function ProfitableCraftsPage() {
 	const [materialPricing, setMaterialPricing] = useState<MaterialPricingMode>("buy")
 	const [outputPricing, setOutputPricing] = useState<OutputPricingMode>("sell")
 	const hasLoadedInitialData = useRef(false)
+
+	const watchlistIdSet = useMemo(() => new Set(watchlistIds), [watchlistIds])
+
+	function currentFilterSettings(): SavedFilterSettings {
+		return {
+			limit,
+			minProfit,
+			minBuyQuantity,
+			minSellQuantity,
+			excludeLowLiquidity,
+			excludeSuspiciousSpread,
+			discipline,
+			itemNameSearch,
+			materialPricing,
+			outputPricing,
+			watchlistOnly,
+		}
+	}
 
 	const loadData = useCallback(async () => {
 		try {
@@ -459,6 +605,86 @@ export default function ProfitableCraftsPage() {
 		} finally {
 			setAccountSyncing(false)
 		}
+	}
+
+	function handleToggleWatchlistItem(itemId: number) {
+		setWatchlistIds((current) => {
+			const next = current.includes(itemId)
+				? current.filter((currentItemId) => currentItemId !== itemId)
+				: [...current, itemId]
+
+			saveWatchlistIds(next)
+			return next
+		})
+	}
+
+	function applyFilterSettings(settings: SavedFilterSettings) {
+		setLimit(settings.limit)
+		setMinProfit(settings.minProfit)
+		setMinBuyQuantity(settings.minBuyQuantity)
+		setMinSellQuantity(settings.minSellQuantity)
+		setExcludeLowLiquidity(settings.excludeLowLiquidity)
+		setExcludeSuspiciousSpread(settings.excludeSuspiciousSpread)
+		setDiscipline(settings.discipline)
+		setItemNameSearch(settings.itemNameSearch)
+		setMaterialPricing(settings.materialPricing)
+		setOutputPricing(settings.outputPricing)
+		setWatchlistOnly(settings.watchlistOnly)
+	}
+
+	function handleSaveFilterPreset() {
+		const trimmedName = filterPresetName.trim()
+
+		if (!trimmedName) {
+			setFilterPresetMessage("Enter a preset name before saving.")
+			return
+		}
+
+		const existingPreset = filterPresets.find(
+			(preset) => preset.name.toLowerCase() === trimmedName.toLowerCase(),
+		)
+		const nextPreset: SavedFilterPreset = {
+			id: existingPreset?.id ?? String(Date.now()),
+			name: trimmedName,
+			settings: currentFilterSettings(),
+		}
+		const nextPresets = existingPreset
+			? filterPresets.map((preset) => (preset.id === existingPreset.id ? nextPreset : preset))
+			: [...filterPresets, nextPreset]
+
+		setFilterPresets(nextPresets)
+		saveFilterPresets(nextPresets)
+		setSelectedFilterPresetId(nextPreset.id)
+		setFilterPresetMessage(`Saved filter preset "${trimmedName}".`)
+	}
+
+	function handleApplyFilterPreset() {
+		const preset = filterPresets.find((current) => current.id === selectedFilterPresetId)
+
+		if (preset === undefined) {
+			setFilterPresetMessage("Choose a saved preset to apply.")
+			return
+		}
+
+		applyFilterSettings(preset.settings)
+		setFilterPresetName(preset.name)
+		setFilterPresetMessage(`Applied filter preset "${preset.name}".`)
+	}
+
+	function handleDeleteFilterPreset() {
+		const preset = filterPresets.find((current) => current.id === selectedFilterPresetId)
+
+		if (preset === undefined) {
+			setFilterPresetMessage("Choose a saved preset to delete.")
+			return
+		}
+
+		const nextPresets = filterPresets.filter((current) => current.id !== preset.id)
+		setFilterPresets(nextPresets)
+		saveFilterPresets(nextPresets)
+		setSelectedFilterPresetId("")
+		setFilterPresetName("")
+		setFilterPresetMessage(`Deleted filter preset "${preset.name}".`)
 	}
 
 	async function handleCopyShoppingList() {
@@ -655,13 +881,18 @@ export default function ProfitableCraftsPage() {
 
 	const filteredRows = useMemo(() => {
 		const normalizedSearch = itemNameSearch.trim().toLowerCase()
+		let nextRows = rows
 
-		if (!normalizedSearch) {
-			return rows
+		if (watchlistOnly) {
+			nextRows = nextRows.filter((row) => watchlistIdSet.has(row.item_id))
 		}
 
-		return rows.filter((row) => row.name.toLowerCase().includes(normalizedSearch))
-	}, [itemNameSearch, rows])
+		if (normalizedSearch) {
+			nextRows = nextRows.filter((row) => row.name.toLowerCase().includes(normalizedSearch))
+		}
+
+		return nextRows
+	}, [itemNameSearch, rows, watchlistIdSet, watchlistOnly])
 
 	const sortedRows = useMemo(() => {
 		const copied = [...filteredRows]
@@ -1119,6 +1350,16 @@ export default function ProfitableCraftsPage() {
 							label="Exclude Suspicious Spread"
 						/>
 
+						<FormControlLabel
+							control={
+								<Checkbox
+									checked={watchlistOnly}
+									onChange={(e) => setWatchlistOnly(e.target.checked)}
+								/>
+							}
+							label="Watchlist Only"
+						/>
+
 						<TextField
 							select
 							label="Material Pricing"
@@ -1158,6 +1399,108 @@ export default function ProfitableCraftsPage() {
 							Refresh Results
 						</Button>
 						</Stack>
+
+						<Divider />
+
+						<Stack spacing={1.5}>
+							<Box>
+								<Typography
+									variant="subtitle2"
+									sx={{ color: "#5a3d1f", fontWeight: 800, textTransform: "uppercase" }}
+								>
+									Saved Filters
+								</Typography>
+								<Typography variant="body2" color="text.secondary">
+									Save this filter setup or restore one of your local presets.
+								</Typography>
+							</Box>
+
+							<Stack direction={{ xs: "column", md: "row" }} spacing={1.5} flexWrap="wrap" useFlexGap>
+								<TextField
+									label="Preset Name"
+									value={filterPresetName}
+									onChange={(e) => setFilterPresetName(e.target.value)}
+									size="small"
+									sx={{ minWidth: 220 }}
+								/>
+
+								<Button
+									variant="contained"
+									onClick={handleSaveFilterPreset}
+									sx={{
+										bgcolor: accentColor,
+										minHeight: 40,
+										"&:hover": {
+											bgcolor: "#8d5e25",
+										},
+									}}
+								>
+									Save Filter
+								</Button>
+
+								<TextField
+									select
+									label="Saved Filter"
+									value={selectedFilterPresetId}
+									onChange={(e) => {
+										const nextId = e.target.value
+										setSelectedFilterPresetId(nextId)
+										const preset = filterPresets.find((current) => current.id === nextId)
+										setFilterPresetName(preset?.name ?? "")
+									}}
+									size="small"
+									sx={{ minWidth: 220 }}
+								>
+									<MenuItem value="">Choose preset</MenuItem>
+									{filterPresets.map((preset) => (
+										<MenuItem key={preset.id} value={preset.id}>
+											{preset.name}
+										</MenuItem>
+									))}
+								</TextField>
+
+								<Button
+									variant="outlined"
+									disabled={!selectedFilterPresetId}
+									onClick={handleApplyFilterPreset}
+									sx={{
+										borderColor: accentColor,
+										color: accentColor,
+										minHeight: 40,
+										"&:hover": {
+											borderColor: "#8d5e25",
+											bgcolor: "rgba(165, 111, 44, 0.08)",
+										},
+									}}
+								>
+									Apply Filter
+								</Button>
+
+								<Button
+									variant="outlined"
+									disabled={!selectedFilterPresetId}
+									onClick={handleDeleteFilterPreset}
+									sx={{
+										borderColor: "error.main",
+										color: "error.main",
+										minHeight: 40,
+										"&:hover": {
+											borderColor: "error.dark",
+											bgcolor: "rgba(211, 47, 47, 0.08)",
+										},
+									}}
+								>
+									Delete Filter
+								</Button>
+							</Stack>
+
+							{filterPresetMessage && (
+								<Typography variant="caption" color="text.secondary">
+									{filterPresetMessage}
+								</Typography>
+							)}
+						</Stack>
+
 						<Stack
 							direction={{ xs: "column", sm: "row" }}
 							spacing={1}
@@ -1168,6 +1511,9 @@ export default function ProfitableCraftsPage() {
 							</Typography>
 							<Typography variant="caption">
 								Showing {formatNumber(sortedRows.length)} of {formatNumber(rows.length)} loaded crafts
+							</Typography>
+							<Typography variant="caption">
+								Watching {formatNumber(watchlistIds.length)} crafts
 							</Typography>
 						</Stack>
 					</Stack>
@@ -1253,10 +1599,11 @@ export default function ProfitableCraftsPage() {
 							maxHeight: "calc(100vh - 360px)",
 						}}
 					>
-						<Table stickyHeader size="small" sx={{ minWidth: 1400 }}>
+						<Table stickyHeader size="small" sx={{ minWidth: 1500 }}>
 							<TableHead>
 								<TableRow>
 									<SortableHeader label="Name" sortKey="name" sx={stickyNameHeaderSx} />
+									<TableCell sx={tableHeaderCellSx}>Watch</TableCell>
 									<TableCell sx={tableHeaderCellSx}>Disciplines</TableCell>
 									<SortableHeader align="right" label="Craft Cost" sortKey="craft_cost" />
 									<SortableHeader align="right" label="Sell Price" sortKey="sell_price" />
@@ -1288,6 +1635,30 @@ export default function ProfitableCraftsPage() {
 										sx={{ ...zebraRowSx, cursor: "pointer" }}
 									>
 										<TableCell sx={stickyNameCellSx}>{row.name}</TableCell>
+										<TableCell>
+											<Button
+												variant={watchlistIdSet.has(row.item_id) ? "contained" : "outlined"}
+												size="small"
+												onClick={(event) => {
+													event.stopPropagation()
+													handleToggleWatchlistItem(row.item_id)
+												}}
+												sx={{
+													bgcolor: watchlistIdSet.has(row.item_id) ? accentColor : "transparent",
+													borderColor: accentColor,
+													color: watchlistIdSet.has(row.item_id) ? "#fff" : accentColor,
+													minWidth: 88,
+													"&:hover": {
+														bgcolor: watchlistIdSet.has(row.item_id)
+															? "#8d5e25"
+															: "rgba(165, 111, 44, 0.08)",
+														borderColor: "#8d5e25",
+													},
+												}}
+											>
+												{watchlistIdSet.has(row.item_id) ? "Watching" : "Watch"}
+											</Button>
+										</TableCell>
 										<TableCell>{row.disciplines.join(", ")}</TableCell>
 										<TableCell align="right">{formatCoins(row.craft_cost)}</TableCell>
 										<TableCell align="right">{formatCoins(row.sell_price)}</TableCell>
@@ -1353,14 +1724,36 @@ export default function ProfitableCraftsPage() {
 
 					{selectedItem && !detailLoading && (
 						<Stack spacing={2.5}>
-							<Box>
-								<Typography variant="h5" sx={{ color: "#2f261b", fontWeight: 850 }}>
-									{selectedItem.name}
-								</Typography>
-								<Typography variant="body2" color="text.secondary">
-									{selectedItem.disciplines.join(", ")}
-								</Typography>
-							</Box>
+							<Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" spacing={1.5}>
+								<Box>
+									<Typography variant="h5" sx={{ color: "#2f261b", fontWeight: 850 }}>
+										{selectedItem.name}
+									</Typography>
+									<Typography variant="body2" color="text.secondary">
+										{selectedItem.disciplines.join(", ")}
+									</Typography>
+								</Box>
+
+								<Button
+									variant={watchlistIdSet.has(selectedItem.item_id) ? "contained" : "outlined"}
+									onClick={() => handleToggleWatchlistItem(selectedItem.item_id)}
+									sx={{
+										alignSelf: { xs: "flex-start", sm: "center" },
+										bgcolor: watchlistIdSet.has(selectedItem.item_id) ? accentColor : "transparent",
+										borderColor: accentColor,
+										color: watchlistIdSet.has(selectedItem.item_id) ? "#fff" : accentColor,
+										minHeight: 40,
+										"&:hover": {
+											bgcolor: watchlistIdSet.has(selectedItem.item_id)
+												? "#8d5e25"
+												: "rgba(165, 111, 44, 0.08)",
+											borderColor: "#8d5e25",
+										},
+									}}
+								>
+									{watchlistIdSet.has(selectedItem.item_id) ? "Watching" : "Add to Watchlist"}
+								</Button>
+							</Stack>
 
 							<Paper
 								variant="outlined"
