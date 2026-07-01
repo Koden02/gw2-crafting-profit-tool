@@ -5,13 +5,13 @@
 ![React](https://img.shields.io/badge/React-frontend-blue)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 ![Status](https://img.shields.io/badge/status-early%20development-orange)
-![Version](https://img.shields.io/badge/version-0.1.4-blue)
+![Version](https://img.shields.io/badge/version-0.1.5-blue)
 
 GW2 Craft Profit Tool is a local full-stack app for analyzing Guild Wars 2 crafting profitability using the official Guild Wars 2 API, SQLite, recursive recipe costing, and Trading Post prices.
 
-Project status: Early Development v0.1.4.
+Project status: Early Development v0.1.5.
 
-The v0.1.4 release is focused on local data sync, craft profitability analysis, pricing assumptions, and a usable frontend for browsing profitable crafts. Full inventory-aware profit calculation, historical pricing, listing-depth analysis, and packaging are planned future work.
+The v0.1.5 release is focused on local data sync, craft profitability analysis, pricing assumptions, Trading Post depth visibility, and a usable frontend for browsing profitable crafts. Full inventory-aware profit calculation, historical pricing, and packaging are planned future work.
 
 ## Implemented Features
 
@@ -26,6 +26,11 @@ The v0.1.4 release is focused on local data sync, craft profitability analysis, 
   - `output_pricing=sell`: value crafted output at list-sell prices.
   - `output_pricing=buy`: value crafted output at instant-sell prices.
 - Liquidity and suspicious spread filters.
+- On-demand Trading Post listing-depth analysis:
+  - break-even sale price
+  - profitable instant-sell depth
+  - competing profitable sell-listing quantity
+  - market pressure label
 - Craft vs sell ingredients comparison:
   - `ingredient_sale_value`
   - `crafted_item_value`
@@ -41,6 +46,7 @@ The v0.1.4 release is focused on local data sync, craft profitability analysis, 
   - frontend sync controls for items, recipes, and Trading Post prices
   - read-only account holdings sync for material storage and bank inventory
   - batch craft planner with missing-material shopping list
+  - Trading Post market-depth view in the item detail drawer
   - summary cards
   - formatted coin values
   - recommendation chips
@@ -224,10 +230,9 @@ npm run lint
 
 ## Current Limitations
 
-Not implemented in v0.1.4:
+Not implemented in v0.1.5:
 
 - Full inventory-aware profit recalculation.
-- Trading Post listing-depth analysis.
 - Historical price charts.
 - Price stability scoring.
 - Docker or packaged desktop distribution.

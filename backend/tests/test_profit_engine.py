@@ -242,3 +242,50 @@ def test_ingredient_breakdown_includes_account_holdings(db_session: Session) -> 
 	assert ingredients_by_id[2]["missing_count"] == 1
 	assert ingredients_by_id[3]["owned_count"] == 5
 	assert ingredients_by_id[3]["missing_count"] == 0
+
+
+def test_listing_depth_calculates_profitable_market_depth(db_session: Session) -> None:
+	seed_simple_recipe(db_session)
+
+	listing_data = {
+		"buys": [
+			{"unit_price": 410, "quantity": 5, "listings": 1},
+			{"unit_price": 500, "quantity": 10, "listings": 2},
+		],
+		"sells": [
+			{"unit_price": 500, "quantity": 20, "listings": 4},
+			{"unit_price": 600, "quantity": 40, "listings": 8},
+		],
+	}
+
+	result = ProfitEngine(db_session).calculate_listing_depth(1, listing_data)
+
+	assert result is not None
+	assert result["break_even_sale_price"] == 411
+	assert result["last_profitable_buy_order_price"] == 500
+	assert result["instant_sell_limit_quantity"] == 10
+	assert result["instant_sell_depth_profit"] == 750
+	assert result["profitable_buy_order_level_count"] == 1
+	assert result["existing_competing_sell_quantity"] == 60
+	assert result["competing_sell_level_count"] == 2
+	assert result["estimated_market_pressure"] == "healthy market"
+
+
+def test_listing_depth_flags_unprofitable_lowest_sell_as_dead_market(db_session: Session) -> None:
+	seed_simple_recipe(db_session)
+
+	listing_data = {
+		"buys": [
+			{"unit_price": 410, "quantity": 5, "listings": 1},
+		],
+		"sells": [
+			{"unit_price": 410, "quantity": 20, "listings": 4},
+			{"unit_price": 600, "quantity": 40, "listings": 8},
+		],
+	}
+
+	result = ProfitEngine(db_session).calculate_listing_depth(1, listing_data)
+
+	assert result is not None
+	assert result["instant_sell_limit_quantity"] == 0
+	assert result["estimated_market_pressure"] == "dead market"

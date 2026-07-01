@@ -56,6 +56,9 @@ class GW2Client:
 	def fetch_all_commerce_price_ids(self) -> list[int]:
 		return self._get("/v2/commerce/prices")
 
+	def fetch_commerce_listing(self, item_id: int) -> dict[str, Any]:
+		return self._get(f"/v2/commerce/listings/{item_id}")
+
 	def fetch_account_materials(self, api_key: str) -> list[dict[str, Any]]:
 		return self._get("/v2/account/materials", headers=self._auth_headers(api_key))
 

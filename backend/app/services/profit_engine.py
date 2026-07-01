@@ -52,6 +52,15 @@ class ProfitEngine:
 	def trading_post_net(price: int) -> int:
 		return price - ProfitEngine.listing_fee(price) - ProfitEngine.exchange_fee(price)
 
+	@staticmethod
+	def break_even_sale_price(craft_cost: float) -> int:
+		price = max(1, math.ceil(craft_cost))
+
+		while ProfitEngine.trading_post_net(price) < craft_cost:
+			price += 1
+
+		return price
+
 	def get_item_name(self, item_id: int) -> str:
 		item = self.get_item(item_id)
 		return item.name if item else f"Unknown Item {item_id}"
@@ -310,3 +319,128 @@ class ProfitEngine:
 		results.sort(key=lambda row: row["profit"], reverse=True)
 
 		return results[:limit]
+
+	def calculate_listing_depth(
+		self,
+		item_id: int,
+		listing_data: dict[str, Any],
+		material_pricing: str = "buy",
+	) -> dict[str, Any] | None:
+		craft_cost = self.calculate_craft_cost(item_id, material_pricing)
+
+		if craft_cost is None:
+			return None
+
+		break_even_price = self.break_even_sale_price(craft_cost)
+		buy_levels = self.normalize_listing_levels(listing_data.get("buys", []), reverse=True)
+		sell_levels = self.normalize_listing_levels(listing_data.get("sells", []), reverse=False)
+
+		profitable_buy_levels: list[dict[str, Any]] = []
+		instant_sell_limit_quantity = 0
+		instant_sell_depth_profit = 0.0
+		last_profitable_buy_order_price = None
+
+		for level in buy_levels:
+			net_sale = self.trading_post_net(level["unit_price"])
+			profit_per_item = net_sale - craft_cost
+
+			if profit_per_item <= 0:
+				break
+
+			last_profitable_buy_order_price = level["unit_price"]
+			instant_sell_limit_quantity += level["quantity"]
+			instant_sell_depth_profit += profit_per_item * level["quantity"]
+			profitable_buy_levels.append(
+				{
+					**level,
+					"net_sale": net_sale,
+					"profit_per_item": round(profit_per_item, 2),
+				}
+			)
+
+		profitable_sell_levels = []
+		existing_competing_sell_quantity = 0
+
+		for level in sell_levels:
+			net_sale = self.trading_post_net(level["unit_price"])
+			profit_per_item = net_sale - craft_cost
+
+			if profit_per_item <= 0:
+				continue
+
+			existing_competing_sell_quantity += level["quantity"]
+			profitable_sell_levels.append(
+				{
+					**level,
+					"net_sale": net_sale,
+					"profit_per_item": round(profit_per_item, 2),
+				}
+			)
+
+		lowest_sell_price = sell_levels[0]["unit_price"] if sell_levels else None
+		estimated_market_pressure = self.estimate_market_pressure(
+			craft_cost=craft_cost,
+			lowest_sell_price=lowest_sell_price,
+			existing_competing_sell_quantity=existing_competing_sell_quantity,
+			instant_sell_limit_quantity=instant_sell_limit_quantity,
+		)
+
+		return {
+			"item_id": item_id,
+			"name": self.get_item_name(item_id),
+			"craft_cost": round(craft_cost, 2),
+			"break_even_sale_price": break_even_price,
+			"last_profitable_buy_order_price": last_profitable_buy_order_price,
+			"instant_sell_limit_quantity": instant_sell_limit_quantity,
+			"instant_sell_depth_profit": round(instant_sell_depth_profit, 2),
+			"profitable_buy_order_levels": profitable_buy_levels[:20],
+			"profitable_buy_order_level_count": len(profitable_buy_levels),
+			"profitable_listing_price_floor": break_even_price,
+			"existing_competing_sell_quantity": existing_competing_sell_quantity,
+			"competing_sell_levels": profitable_sell_levels[:20],
+			"competing_sell_level_count": len(profitable_sell_levels),
+			"estimated_market_pressure": estimated_market_pressure,
+		}
+
+	def normalize_listing_levels(
+		self,
+		raw_levels: list[dict[str, Any]],
+		reverse: bool,
+	) -> list[dict[str, int]]:
+		levels = []
+
+		for level in raw_levels:
+			unit_price = level.get("unit_price")
+			quantity = level.get("quantity")
+			listings = level.get("listings", 0)
+
+			if not isinstance(unit_price, int) or not isinstance(quantity, int):
+				continue
+
+			levels.append(
+				{
+					"unit_price": unit_price,
+					"quantity": quantity,
+					"listings": listings if isinstance(listings, int) else 0,
+				}
+			)
+
+		return sorted(levels, key=lambda level: level["unit_price"], reverse=reverse)
+
+	def estimate_market_pressure(
+		self,
+		craft_cost: float,
+		lowest_sell_price: int | None,
+		existing_competing_sell_quantity: int,
+		instant_sell_limit_quantity: int,
+	) -> str:
+		if lowest_sell_price is None:
+			return "dead market"
+
+		if self.trading_post_net(lowest_sell_price) <= craft_cost:
+			return "dead market"
+
+		if existing_competing_sell_quantity < 50 or instant_sell_limit_quantity < 10:
+			return "thin market"
+
+		return "healthy market"

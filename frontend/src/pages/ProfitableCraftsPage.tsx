@@ -25,6 +25,7 @@ import {
 
 import {
 	fetchAccountHoldingsStatus,
+	fetchListingDepth,
 	fetchProfitDetail,
 	fetchProfitScenarios,
 	fetchProfitableCrafts,
@@ -34,6 +35,7 @@ import {
 	syncItems,
 	syncRecipes,
 	type AccountHoldingsStatus,
+	type ListingDepthAnalysis,
 	type MaterialPricingMode,
 	type OutputPricingMode,
 	type ProfitScenario,
@@ -238,6 +240,8 @@ export default function ProfitableCraftsPage() {
 
 	const [selectedItem, setSelectedItem] = useState<ProfitableCraft | null>(null)
 	const [scenarioRows, setScenarioRows] = useState<ProfitScenario[]>([])
+	const [listingDepth, setListingDepth] = useState<ListingDepthAnalysis | null>(null)
+	const [listingDepthError, setListingDepthError] = useState<string | null>(null)
 	const [detailLoading, setDetailLoading] = useState(false)
 	const [detailError, setDetailError] = useState<string | null>(null)
 	const [batchOutputCount, setBatchOutputCount] = useState(1)
@@ -311,16 +315,30 @@ export default function ProfitableCraftsPage() {
 			setDetailLoading(true)
 			setDetailError(null)
 			setScenarioRows([])
+			setListingDepth(null)
+			setListingDepthError(null)
 
-			const [detail, scenarios] = await Promise.all([
+			const [detail, scenarios, depth] = await Promise.all([
 				fetchProfitDetail(itemId, {
 					material_pricing: materialPricing,
 					output_pricing: outputPricing,
 				}),
 				fetchProfitScenarios(itemId),
+				fetchListingDepth(itemId, {
+					material_pricing: materialPricing,
+				}).catch((err) => {
+					if (err instanceof Error) {
+						setListingDepthError(err.message)
+					} else {
+						setListingDepthError("Unknown error occurred while loading Trading Post listing depth.")
+					}
+
+					return null
+				}),
 			])
 			setSelectedItem(detail)
 			setScenarioRows(scenarios)
+			setListingDepth(depth)
 			setBatchOutputCount(Math.max(1, detail.output_item_count ?? 1))
 			setShoppingListCopyMessage(null)
 		} catch (err) {
@@ -450,6 +468,22 @@ export default function ProfitableCraftsPage() {
 		}
 
 		if (recommendation === "Sell Ingredients") {
+			return "error"
+		}
+
+		return "default"
+	}
+
+	function marketPressureChipColor(pressure: string): "success" | "warning" | "error" | "default" {
+		if (pressure === "healthy market") {
+			return "success"
+		}
+
+		if (pressure === "thin market") {
+			return "warning"
+		}
+
+		if (pressure === "dead market") {
 			return "error"
 		}
 
@@ -1266,6 +1300,8 @@ export default function ProfitableCraftsPage() {
 				onClose={() => {
 					setSelectedItem(null)
 					setScenarioRows([])
+					setListingDepth(null)
+					setListingDepthError(null)
 					setDetailError(null)
 				}}
 				PaperProps={{
@@ -1549,6 +1585,161 @@ export default function ProfitableCraftsPage() {
 									<Divider />
 								</>
 							)}
+
+							<Box>
+								<Typography variant="h6" gutterBottom sx={{ color: "#3d2d1c", fontWeight: 800 }}>
+									Trading Post Market Depth
+								</Typography>
+
+								{listingDepthError && (
+									<Alert severity="warning" sx={{ mb: 1.5 }}>
+										{listingDepthError}
+									</Alert>
+								)}
+
+								{listingDepth && (
+									<Stack spacing={1.5}>
+										<Box
+											sx={{
+												display: "grid",
+												gap: 1.25,
+												gridTemplateColumns: {
+													xs: "1fr",
+													sm: "repeat(2, minmax(0, 1fr))",
+													md: "repeat(4, minmax(0, 1fr))",
+												},
+											}}
+										>
+											<Box sx={compactMetricSx}>
+												<Typography variant="caption" color="text.secondary">Market Pressure</Typography>
+												<Box sx={{ mt: 0.5 }}>
+													<Chip
+														label={listingDepth.estimated_market_pressure}
+														color={marketPressureChipColor(listingDepth.estimated_market_pressure)}
+														size="small"
+														sx={{ fontWeight: 800 }}
+													/>
+												</Box>
+											</Box>
+											<Box sx={compactMetricSx}>
+												<Typography variant="caption" color="text.secondary">Break-even Sale</Typography>
+												<Typography sx={{ fontWeight: 750 }}>
+													{formatCoins(listingDepth.break_even_sale_price)}
+												</Typography>
+											</Box>
+											<Box sx={compactMetricSx}>
+												<Typography variant="caption" color="text.secondary">Instant-sell Limit</Typography>
+												<Typography sx={{ fontWeight: 750 }}>
+													{formatNumber(listingDepth.instant_sell_limit_quantity)}
+												</Typography>
+											</Box>
+											<Box sx={compactMetricSx}>
+												<Typography variant="caption" color="text.secondary">Depth Profit</Typography>
+												<Typography sx={{ color: signedValueColor(listingDepth.instant_sell_depth_profit), fontWeight: 750 }}>
+													{formatCoins(listingDepth.instant_sell_depth_profit)}
+												</Typography>
+											</Box>
+											<Box sx={compactMetricSx}>
+												<Typography variant="caption" color="text.secondary">Last Profitable Buy</Typography>
+												<Typography sx={{ fontWeight: 750 }}>
+													{formatCoins(listingDepth.last_profitable_buy_order_price)}
+												</Typography>
+											</Box>
+											<Box sx={compactMetricSx}>
+												<Typography variant="caption" color="text.secondary">Competing Sell Qty</Typography>
+												<Typography sx={{ fontWeight: 750 }}>
+													{formatNumber(listingDepth.existing_competing_sell_quantity)}
+												</Typography>
+											</Box>
+										</Box>
+
+										<Box
+											sx={{
+												display: "grid",
+												gap: 1.5,
+												gridTemplateColumns: {
+													xs: "1fr",
+													lg: "repeat(2, minmax(0, 1fr))",
+												},
+											}}
+										>
+											<TableContainer
+												component={Paper}
+												variant="outlined"
+												sx={{ borderColor: "rgba(98, 63, 24, 0.14)", maxHeight: 300 }}
+											>
+												<Table stickyHeader size="small">
+													<TableHead>
+														<TableRow>
+															<TableCell sx={tableHeaderCellSx}>Profitable Buy Orders</TableCell>
+															<TableCell align="right" sx={tableHeaderCellSx}>Qty</TableCell>
+															<TableCell align="right" sx={tableHeaderCellSx}>Net</TableCell>
+															<TableCell align="right" sx={tableHeaderCellSx}>Profit Each</TableCell>
+														</TableRow>
+													</TableHead>
+													<TableBody>
+														{listingDepth.profitable_buy_order_levels.map((level) => (
+															<TableRow key={`${level.unit_price}-${level.quantity}`} hover sx={zebraRowSx}>
+																<TableCell>{formatCoins(level.unit_price)}</TableCell>
+																<TableCell align="right">{formatNumber(level.quantity)}</TableCell>
+																<TableCell align="right">{formatCoins(level.net_sale)}</TableCell>
+																<TableCell align="right">{formatCoins(level.profit_per_item)}</TableCell>
+															</TableRow>
+														))}
+														{listingDepth.profitable_buy_order_levels.length === 0 && (
+															<TableRow>
+																<TableCell colSpan={4}>
+																	<Typography variant="body2" color="text.secondary">
+																		No currently profitable buy-order depth.
+																	</Typography>
+																</TableCell>
+															</TableRow>
+														)}
+													</TableBody>
+												</Table>
+											</TableContainer>
+
+											<TableContainer
+												component={Paper}
+												variant="outlined"
+												sx={{ borderColor: "rgba(98, 63, 24, 0.14)", maxHeight: 300 }}
+											>
+												<Table stickyHeader size="small">
+													<TableHead>
+														<TableRow>
+															<TableCell sx={tableHeaderCellSx}>Profitable Sell Listings</TableCell>
+															<TableCell align="right" sx={tableHeaderCellSx}>Qty</TableCell>
+															<TableCell align="right" sx={tableHeaderCellSx}>Net</TableCell>
+															<TableCell align="right" sx={tableHeaderCellSx}>Profit Each</TableCell>
+														</TableRow>
+													</TableHead>
+													<TableBody>
+														{listingDepth.competing_sell_levels.map((level) => (
+															<TableRow key={`${level.unit_price}-${level.quantity}`} hover sx={zebraRowSx}>
+																<TableCell>{formatCoins(level.unit_price)}</TableCell>
+																<TableCell align="right">{formatNumber(level.quantity)}</TableCell>
+																<TableCell align="right">{formatCoins(level.net_sale)}</TableCell>
+																<TableCell align="right">{formatCoins(level.profit_per_item)}</TableCell>
+															</TableRow>
+														))}
+														{listingDepth.competing_sell_levels.length === 0 && (
+															<TableRow>
+																<TableCell colSpan={4}>
+																	<Typography variant="body2" color="text.secondary">
+																		No currently profitable sell listing levels.
+																	</Typography>
+																</TableCell>
+															</TableRow>
+														)}
+													</TableBody>
+												</Table>
+											</TableContainer>
+										</Box>
+									</Stack>
+								)}
+							</Box>
+
+							<Divider />
 
 							<Box>
 								<Typography variant="h6" gutterBottom sx={{ color: "#3d2d1c", fontWeight: 800 }}>

@@ -43,6 +43,31 @@ export type ProfitScenario = ProfitableCraft & {
 	output_pricing: OutputPricingMode
 }
 
+export type ListingDepthLevel = {
+	unit_price: number
+	quantity: number
+	listings: number
+	net_sale: number
+	profit_per_item: number
+}
+
+export type ListingDepthAnalysis = {
+	item_id: number
+	name: string
+	craft_cost: number
+	break_even_sale_price: number
+	last_profitable_buy_order_price: number | null
+	instant_sell_limit_quantity: number
+	instant_sell_depth_profit: number
+	profitable_buy_order_levels: ListingDepthLevel[]
+	profitable_buy_order_level_count: number
+	profitable_listing_price_floor: number
+	existing_competing_sell_quantity: number
+	competing_sell_levels: ListingDepthLevel[]
+	competing_sell_level_count: number
+	estimated_market_pressure: string
+}
+
 export type SyncStatus = {
 	price_last_updated: string | null
 	price_count: number
@@ -154,6 +179,30 @@ export async function fetchProfitScenarios(itemId: number): Promise<ProfitScenar
 
 	if (!response.ok) {
 		throw new Error(`Failed to fetch profit scenarios: ${response.status}`)
+	}
+
+	return response.json()
+}
+
+export async function fetchListingDepth(
+	itemId: number,
+	options?: {
+		material_pricing?: MaterialPricingMode
+	},
+): Promise<ListingDepthAnalysis> {
+	const params = new URLSearchParams()
+
+	if (options?.material_pricing) {
+		params.set("material_pricing", options.material_pricing)
+	}
+
+	const suffix = params.toString() ? `?${params.toString()}` : ""
+	const response = await fetch(`${API_BASE_URL}/api/profit/${itemId}/listing-depth${suffix}`)
+
+	if (!response.ok) {
+		const detail = await response.json().catch(() => null)
+		const message = typeof detail?.detail === "string" ? detail.detail : `Failed to fetch listing depth: ${response.status}`
+		throw new Error(message)
 	}
 
 	return response.json()
