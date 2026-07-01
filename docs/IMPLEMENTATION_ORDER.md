@@ -456,7 +456,7 @@ Tasks:
 * create version tag
 
 ```
-v0.1.5
+v0.1.6
 ```
 
 Exit criteria:

@@ -5,13 +5,13 @@
 ![React](https://img.shields.io/badge/React-frontend-blue)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 ![Status](https://img.shields.io/badge/status-early%20development-orange)
-![Version](https://img.shields.io/badge/version-0.1.5-blue)
+![Version](https://img.shields.io/badge/version-0.1.6-blue)
 
 GW2 Craft Profit Tool is a local full-stack app for analyzing Guild Wars 2 crafting profitability using the official Guild Wars 2 API, SQLite, recursive recipe costing, and Trading Post prices.
 
-Project status: Early Development v0.1.5.
+Project status: Early Development v0.1.6.
 
-The v0.1.5 release is focused on local data sync, craft profitability analysis, pricing assumptions, Trading Post depth visibility, and a usable frontend for browsing profitable crafts. Full inventory-aware profit calculation, historical pricing, and packaging are planned future work.
+The v0.1.6 release is focused on local data sync, craft profitability analysis, pricing assumptions, Trading Post depth visibility, owned-material adjusted batch planning, and a usable frontend for browsing profitable crafts. Full inventory-aware table ranking, historical pricing, and packaging are planned future work.
 
 ## Implemented Features
 
@@ -46,6 +46,7 @@ The v0.1.5 release is focused on local data sync, craft profitability analysis, 
   - frontend sync controls for items, recipes, and Trading Post prices
   - read-only account holdings sync for material storage and bank inventory
   - batch craft planner with missing-material shopping list
+  - out-of-pocket batch profit and owned-material coverage in the planner
   - Trading Post market-depth view in the item detail drawer
   - summary cards
   - formatted coin values
@@ -230,9 +231,9 @@ npm run lint
 
 ## Current Limitations
 
-Not implemented in v0.1.5:
+Not implemented in v0.1.6:
 
-- Full inventory-aware profit recalculation.
+- Full inventory-aware table ranking.
 - Historical price charts.
 - Price stability scoring.
 - Docker or packaged desktop distribution.

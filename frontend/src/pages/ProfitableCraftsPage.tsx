@@ -159,11 +159,19 @@ function buildShoppingListCopyText(itemName: string, plan: Omit<ShoppingPlan, "c
 		`Requested output: ${formatNumber(plan.requestedOutputCount)}`,
 		`Recipe runs: ${formatNumber(plan.recipeRuns)}`,
 		`Planned output: ${formatNumber(plan.plannedOutputCount)}`,
-		`Expected profit: ${formatCoins(plan.expectedProfit)}`,
-		`Estimated missing-material buy cost: ${formatCoins(plan.missingBuyCost)}`,
-		"",
-		"Missing direct ingredients:",
+		`Market profit: ${formatCoins(plan.marketProfit)}`,
+		`Out-of-pocket cost: ${formatCoins(plan.outOfPocketCost)}`,
+		`Out-of-pocket profit: ${formatCoins(plan.outOfPocketProfit)}`,
+		`Owned coverage: ${formatPercent(plan.ownedCoverageRatio)}`,
 	]
+
+	if (plan.plannedExceedsInstantSellDepth && plan.instantSellDepthLimit !== null) {
+		lines.push(
+			`Depth warning: planned output exceeds profitable instant-sell depth of ${formatNumber(plan.instantSellDepthLimit)}.`,
+		)
+	}
+
+	lines.push("", "Missing direct ingredients:")
 
 	if (missingRows.length === 0) {
 		lines.push("None")
@@ -203,6 +211,7 @@ type ShoppingListRow = {
 	name: string
 	requiredCount: number
 	ownedCount: number
+	ownedAppliedCount: number
 	missingCount: number
 	unitBuyPrice: number | null
 	missingBuyCost: number | null
@@ -214,9 +223,16 @@ type ShoppingPlan = {
 	plannedOutputCount: number
 	totalCraftCost: number
 	totalNetSale: number
-	expectedProfit: number
+	marketProfit: number
+	outOfPocketCost: number
+	outOfPocketProfit: number
+	requiredIngredientCount: number
+	ownedAppliedCount: number
+	ownedCoverageRatio: number
 	missingBuyCost: number
 	hasUnavailablePrices: boolean
+	instantSellDepthLimit: number | null
+	plannedExceedsInstantSellDepth: boolean
 	rows: ShoppingListRow[]
 	copyText: string
 }
@@ -788,6 +804,7 @@ export default function ProfitableCraftsPage() {
 		const rows = (selectedItem.ingredients ?? []).map((ingredient) => {
 			const requiredCount = ingredient.count * recipeRuns
 			const ownedCount = ingredient.owned_count ?? 0
+			const ownedAppliedCount = Math.min(requiredCount, ownedCount)
 			const missingCount = Math.max(requiredCount - ownedCount, 0)
 			const missingBuyCost = ingredient.buy_price === null ? null : ingredient.buy_price * missingCount
 
@@ -796,22 +813,36 @@ export default function ProfitableCraftsPage() {
 				name: ingredient.name,
 				requiredCount,
 				ownedCount,
+				ownedAppliedCount,
 				missingCount,
 				unitBuyPrice: ingredient.buy_price,
 				missingBuyCost,
 			}
 		})
 		const missingBuyCost = rows.reduce((total, row) => total + (row.missingBuyCost ?? 0), 0)
+		const requiredIngredientCount = rows.reduce((total, row) => total + row.requiredCount, 0)
+		const ownedAppliedCount = rows.reduce((total, row) => total + row.ownedAppliedCount, 0)
+		const ownedCoverageRatio = requiredIngredientCount > 0 ? ownedAppliedCount / requiredIngredientCount : 1
 		const hasUnavailablePrices = rows.some((row) => row.missingCount > 0 && row.missingBuyCost === null)
+		const totalNetSale = selectedItem.net_sale * plannedOutputCount
+		const instantSellDepthLimit = listingDepth?.instant_sell_limit_quantity ?? null
 		const planWithoutCopy = {
 			requestedOutputCount,
 			recipeRuns,
 			plannedOutputCount,
 			totalCraftCost: selectedItem.craft_cost * plannedOutputCount,
-			totalNetSale: selectedItem.net_sale * plannedOutputCount,
-			expectedProfit: selectedItem.profit * plannedOutputCount,
+			totalNetSale,
+			marketProfit: selectedItem.profit * plannedOutputCount,
+			outOfPocketCost: missingBuyCost,
+			outOfPocketProfit: totalNetSale - missingBuyCost,
+			requiredIngredientCount,
+			ownedAppliedCount,
+			ownedCoverageRatio,
 			missingBuyCost,
 			hasUnavailablePrices,
+			instantSellDepthLimit,
+			plannedExceedsInstantSellDepth:
+				instantSellDepthLimit !== null && plannedOutputCount > instantSellDepthLimit,
 			rows,
 		}
 
@@ -819,7 +850,7 @@ export default function ProfitableCraftsPage() {
 			...planWithoutCopy,
 			copyText: buildShoppingListCopyText(selectedItem.name, planWithoutCopy),
 		}
-	}, [batchOutputCount, selectedItem])
+	}, [batchOutputCount, listingDepth, selectedItem])
 
 	useEffect(() => {
 		if (hasLoadedInitialData.current) {
@@ -1509,20 +1540,34 @@ export default function ProfitableCraftsPage() {
 												<Typography sx={{ fontWeight: 750 }}>{formatNumber(shoppingPlan.plannedOutputCount)}</Typography>
 											</Box>
 											<Box sx={compactMetricSx}>
-												<Typography variant="caption" color="text.secondary">Missing Buy Cost</Typography>
-												<Typography sx={{ fontWeight: 750 }}>{formatCoins(shoppingPlan.missingBuyCost)}</Typography>
-											</Box>
-											<Box sx={compactMetricSx}>
-												<Typography variant="caption" color="text.secondary">Expected Profit</Typography>
-												<Typography
-													sx={{ color: signedValueColor(shoppingPlan.expectedProfit), fontWeight: 750 }}
-												>
-													{formatCoins(shoppingPlan.expectedProfit)}
+												<Typography variant="caption" color="text.secondary">Owned Coverage</Typography>
+												<Typography sx={{ fontWeight: 750 }}>
+													{formatPercent(shoppingPlan.ownedCoverageRatio)}
 												</Typography>
 											</Box>
 											<Box sx={compactMetricSx}>
-												<Typography variant="caption" color="text.secondary">Craft Cost</Typography>
+												<Typography variant="caption" color="text.secondary">Out-of-pocket Cost</Typography>
+												<Typography sx={{ fontWeight: 750 }}>{formatCoins(shoppingPlan.outOfPocketCost)}</Typography>
+											</Box>
+											<Box sx={compactMetricSx}>
+												<Typography variant="caption" color="text.secondary">Out-of-pocket Profit</Typography>
+												<Typography
+													sx={{ color: signedValueColor(shoppingPlan.outOfPocketProfit), fontWeight: 750 }}
+												>
+													{formatCoins(shoppingPlan.outOfPocketProfit)}
+												</Typography>
+											</Box>
+											<Box sx={compactMetricSx}>
+												<Typography variant="caption" color="text.secondary">Market Craft Cost</Typography>
 												<Typography sx={{ fontWeight: 750 }}>{formatCoins(shoppingPlan.totalCraftCost)}</Typography>
+											</Box>
+											<Box sx={compactMetricSx}>
+												<Typography variant="caption" color="text.secondary">Market Profit</Typography>
+												<Typography
+													sx={{ color: signedValueColor(shoppingPlan.marketProfit), fontWeight: 750 }}
+												>
+													{formatCoins(shoppingPlan.marketProfit)}
+												</Typography>
 											</Box>
 											<Box sx={compactMetricSx}>
 												<Typography variant="caption" color="text.secondary">Net Sale</Typography>
@@ -1530,9 +1575,17 @@ export default function ProfitableCraftsPage() {
 											</Box>
 										</Box>
 
+										{shoppingPlan.plannedExceedsInstantSellDepth && shoppingPlan.instantSellDepthLimit !== null && (
+											<Alert severity="warning" sx={{ mb: 1.5 }}>
+												Planned output exceeds profitable instant-sell depth of{" "}
+												{formatNumber(shoppingPlan.instantSellDepthLimit)}. Listing the output may still work, but
+												instant-selling this full batch is not supported by current buy orders.
+											</Alert>
+										)}
+
 										{shoppingPlan.hasUnavailablePrices && (
 											<Alert severity="warning" sx={{ mb: 1.5 }}>
-												Some missing ingredients do not have current buy prices.
+												Some missing ingredients do not have current buy prices, so out-of-pocket cost is incomplete.
 											</Alert>
 										)}
 
