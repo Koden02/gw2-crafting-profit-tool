@@ -150,6 +150,35 @@ function saveAccountApiKey(apiKey: string): void {
 	window.localStorage.removeItem(accountApiKeyStorageKey)
 }
 
+function buildShoppingListCopyText(itemName: string, plan: Omit<ShoppingPlan, "copyText">): string {
+	const missingRows = plan.rows.filter((row) => row.missingCount > 0)
+	const lines = [
+		`${itemName} batch plan`,
+		`Requested output: ${formatNumber(plan.requestedOutputCount)}`,
+		`Recipe runs: ${formatNumber(plan.recipeRuns)}`,
+		`Planned output: ${formatNumber(plan.plannedOutputCount)}`,
+		`Expected profit: ${formatCoins(plan.expectedProfit)}`,
+		`Estimated missing-material buy cost: ${formatCoins(plan.missingBuyCost)}`,
+		"",
+		"Missing direct ingredients:",
+	]
+
+	if (missingRows.length === 0) {
+		lines.push("None")
+		return lines.join("\n")
+	}
+
+	for (const row of missingRows) {
+		const cost = row.missingBuyCost === null ? "price unavailable" : formatCoins(row.missingBuyCost)
+		lines.push(
+			`${formatNumber(row.missingCount)} ${row.name} ` +
+				`(required ${formatNumber(row.requiredCount)}, owned ${formatNumber(row.ownedCount)}, ${cost})`,
+		)
+	}
+
+	return lines.join("\n")
+}
+
 type SortKey =
 	| "name"
 	| "craft_cost"
@@ -166,6 +195,29 @@ type SortKey =
 
 type SortDirection = "asc" | "desc"
 type SyncDataset = "prices" | "items" | "recipes"
+
+type ShoppingListRow = {
+	itemId: number
+	name: string
+	requiredCount: number
+	ownedCount: number
+	missingCount: number
+	unitBuyPrice: number | null
+	missingBuyCost: number | null
+}
+
+type ShoppingPlan = {
+	requestedOutputCount: number
+	recipeRuns: number
+	plannedOutputCount: number
+	totalCraftCost: number
+	totalNetSale: number
+	expectedProfit: number
+	missingBuyCost: number
+	hasUnavailablePrices: boolean
+	rows: ShoppingListRow[]
+	copyText: string
+}
 
 export default function ProfitableCraftsPage() {
 	const [rows, setRows] = useState<ProfitableCraft[]>([])
@@ -188,6 +240,8 @@ export default function ProfitableCraftsPage() {
 	const [scenarioRows, setScenarioRows] = useState<ProfitScenario[]>([])
 	const [detailLoading, setDetailLoading] = useState(false)
 	const [detailError, setDetailError] = useState<string | null>(null)
+	const [batchOutputCount, setBatchOutputCount] = useState(1)
+	const [shoppingListCopyMessage, setShoppingListCopyMessage] = useState<string | null>(null)
 
 	const [limit, setLimit] = useState(50)
 	const [minProfit, setMinProfit] = useState(0)
@@ -267,6 +321,8 @@ export default function ProfitableCraftsPage() {
 			])
 			setSelectedItem(detail)
 			setScenarioRows(scenarios)
+			setBatchOutputCount(Math.max(1, detail.output_item_count ?? 1))
+			setShoppingListCopyMessage(null)
 		} catch (err) {
 			if (err instanceof Error) {
 				setDetailError(err.message)
@@ -368,6 +424,19 @@ export default function ProfitableCraftsPage() {
 			}
 		} finally {
 			setAccountSyncing(false)
+		}
+	}
+
+	async function handleCopyShoppingList() {
+		if (shoppingPlan === null) {
+			return
+		}
+
+		try {
+			await navigator.clipboard.writeText(shoppingPlan.copyText)
+			setShoppingListCopyMessage("Shopping list copied.")
+		} catch {
+			setShoppingListCopyMessage("Could not copy shopping list from this browser.")
 		}
 	}
 
@@ -672,6 +741,51 @@ export default function ProfitableCraftsPage() {
 
 		return null
 	}, [syncStatus])
+
+	const shoppingPlan = useMemo<ShoppingPlan | null>(() => {
+		if (selectedItem === null) {
+			return null
+		}
+
+		const outputPerRecipe = Math.max(1, selectedItem.output_item_count ?? 1)
+		const requestedOutputCount = Math.max(1, Math.floor(batchOutputCount) || 1)
+		const recipeRuns = Math.ceil(requestedOutputCount / outputPerRecipe)
+		const plannedOutputCount = recipeRuns * outputPerRecipe
+		const rows = (selectedItem.ingredients ?? []).map((ingredient) => {
+			const requiredCount = ingredient.count * recipeRuns
+			const ownedCount = ingredient.owned_count ?? 0
+			const missingCount = Math.max(requiredCount - ownedCount, 0)
+			const missingBuyCost = ingredient.buy_price === null ? null : ingredient.buy_price * missingCount
+
+			return {
+				itemId: ingredient.item_id,
+				name: ingredient.name,
+				requiredCount,
+				ownedCount,
+				missingCount,
+				unitBuyPrice: ingredient.buy_price,
+				missingBuyCost,
+			}
+		})
+		const missingBuyCost = rows.reduce((total, row) => total + (row.missingBuyCost ?? 0), 0)
+		const hasUnavailablePrices = rows.some((row) => row.missingCount > 0 && row.missingBuyCost === null)
+		const planWithoutCopy = {
+			requestedOutputCount,
+			recipeRuns,
+			plannedOutputCount,
+			totalCraftCost: selectedItem.craft_cost * plannedOutputCount,
+			totalNetSale: selectedItem.net_sale * plannedOutputCount,
+			expectedProfit: selectedItem.profit * plannedOutputCount,
+			missingBuyCost,
+			hasUnavailablePrices,
+			rows,
+		}
+
+		return {
+			...planWithoutCopy,
+			copyText: buildShoppingListCopyText(selectedItem.name, planWithoutCopy),
+		}
+	}, [batchOutputCount, selectedItem])
 
 	useEffect(() => {
 		if (hasLoadedInitialData.current) {
@@ -1286,6 +1400,155 @@ export default function ProfitableCraftsPage() {
 							</Box>
 
 							<Divider />
+
+							{shoppingPlan && (
+								<>
+									<Box>
+										<Stack
+											direction={{ xs: "column", md: "row" }}
+											justifyContent="space-between"
+											spacing={2}
+											sx={{ mb: 1.5 }}
+										>
+											<Box>
+												<Typography variant="h6" sx={{ color: "#3d2d1c", fontWeight: 800 }}>
+													Batch Craft Planner
+												</Typography>
+												<Typography variant="body2" color="text.secondary">
+													Direct recipe ingredients for the selected craft.
+												</Typography>
+											</Box>
+
+											<Stack direction={{ xs: "column", sm: "row" }} spacing={1.25}>
+												<TextField
+													label="Target Output"
+													type="number"
+													value={batchOutputCount}
+													onChange={(event) => {
+														const nextValue = Number(event.target.value)
+														setBatchOutputCount(Number.isFinite(nextValue) ? Math.max(1, Math.floor(nextValue)) : 1)
+														setShoppingListCopyMessage(null)
+													}}
+													size="small"
+													slotProps={{ htmlInput: { min: 1, step: 1 } }}
+													sx={{ minWidth: 150 }}
+												/>
+
+												<Button
+													variant="outlined"
+													onClick={() => void handleCopyShoppingList()}
+													sx={{
+														borderColor: accentColor,
+														color: accentColor,
+														minHeight: 40,
+														"&:hover": {
+															borderColor: "#8d5e25",
+															bgcolor: "rgba(165, 111, 44, 0.08)",
+														},
+													}}
+												>
+													Copy Shopping List
+												</Button>
+											</Stack>
+										</Stack>
+
+										<Box
+											sx={{
+												display: "grid",
+												gap: 1.25,
+												gridTemplateColumns: {
+													xs: "1fr",
+													sm: "repeat(2, minmax(0, 1fr))",
+													md: "repeat(4, minmax(0, 1fr))",
+												},
+												mb: 1.5,
+											}}
+										>
+											<Box sx={compactMetricSx}>
+												<Typography variant="caption" color="text.secondary">Recipe Runs</Typography>
+												<Typography sx={{ fontWeight: 750 }}>{formatNumber(shoppingPlan.recipeRuns)}</Typography>
+											</Box>
+											<Box sx={compactMetricSx}>
+												<Typography variant="caption" color="text.secondary">Planned Output</Typography>
+												<Typography sx={{ fontWeight: 750 }}>{formatNumber(shoppingPlan.plannedOutputCount)}</Typography>
+											</Box>
+											<Box sx={compactMetricSx}>
+												<Typography variant="caption" color="text.secondary">Missing Buy Cost</Typography>
+												<Typography sx={{ fontWeight: 750 }}>{formatCoins(shoppingPlan.missingBuyCost)}</Typography>
+											</Box>
+											<Box sx={compactMetricSx}>
+												<Typography variant="caption" color="text.secondary">Expected Profit</Typography>
+												<Typography
+													sx={{ color: signedValueColor(shoppingPlan.expectedProfit), fontWeight: 750 }}
+												>
+													{formatCoins(shoppingPlan.expectedProfit)}
+												</Typography>
+											</Box>
+											<Box sx={compactMetricSx}>
+												<Typography variant="caption" color="text.secondary">Craft Cost</Typography>
+												<Typography sx={{ fontWeight: 750 }}>{formatCoins(shoppingPlan.totalCraftCost)}</Typography>
+											</Box>
+											<Box sx={compactMetricSx}>
+												<Typography variant="caption" color="text.secondary">Net Sale</Typography>
+												<Typography sx={{ fontWeight: 750 }}>{formatCoins(shoppingPlan.totalNetSale)}</Typography>
+											</Box>
+										</Box>
+
+										{shoppingPlan.hasUnavailablePrices && (
+											<Alert severity="warning" sx={{ mb: 1.5 }}>
+												Some missing ingredients do not have current buy prices.
+											</Alert>
+										)}
+
+										{shoppingListCopyMessage && (
+											<Alert severity="info" sx={{ mb: 1.5 }}>
+												{shoppingListCopyMessage}
+											</Alert>
+										)}
+
+										<TableContainer
+											component={Paper}
+											variant="outlined"
+											sx={{ borderColor: "rgba(98, 63, 24, 0.14)", maxHeight: 320 }}
+										>
+											<Table stickyHeader size="small" sx={{ minWidth: 900 }}>
+												<TableHead>
+													<TableRow>
+														<TableCell sx={tableHeaderCellSx}>Name</TableCell>
+														<TableCell align="right" sx={tableHeaderCellSx}>Required</TableCell>
+														<TableCell align="right" sx={tableHeaderCellSx}>Owned</TableCell>
+														<TableCell align="right" sx={tableHeaderCellSx}>Missing</TableCell>
+														<TableCell align="right" sx={tableHeaderCellSx}>Unit Buy</TableCell>
+														<TableCell align="right" sx={tableHeaderCellSx}>Missing Cost</TableCell>
+													</TableRow>
+												</TableHead>
+												<TableBody>
+													{shoppingPlan.rows.map((row) => (
+														<TableRow key={row.itemId} hover sx={zebraRowSx}>
+															<TableCell>{row.name}</TableCell>
+															<TableCell align="right">{formatNumber(row.requiredCount)}</TableCell>
+															<TableCell align="right">{formatNumber(row.ownedCount)}</TableCell>
+															<TableCell
+																align="right"
+																sx={{
+																	color: row.missingCount > 0 ? "warning.main" : "success.main",
+																	fontWeight: 700,
+																}}
+															>
+																{formatNumber(row.missingCount)}
+															</TableCell>
+															<TableCell align="right">{formatCoins(row.unitBuyPrice)}</TableCell>
+															<TableCell align="right">{formatCoins(row.missingBuyCost)}</TableCell>
+														</TableRow>
+													))}
+												</TableBody>
+											</Table>
+										</TableContainer>
+									</Box>
+
+									<Divider />
+								</>
+							)}
 
 							<Box>
 								<Typography variant="h6" gutterBottom sx={{ color: "#3d2d1c", fontWeight: 800 }}>
