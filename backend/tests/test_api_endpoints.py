@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,8 +13,11 @@ from sqlalchemy.pool import StaticPool
 from app.db.base import Base
 from app.db.dependencies import get_db
 from app.main import app
-from app.models import AccountHolding, CommercePrice, CommercePriceSnapshot, Item, Recipe, RecipeIngredient
+from app.models import AccountHolding, CommercePrice, CommercePriceRollup, CommercePriceSnapshot, Item, Recipe, RecipeIngredient
 from app.services.gw2_client import GW2Client
+from app.services.price_history_service import PriceHistoryService
+from app.services.price_sync_lock import price_sync_lock
+import app.services.price_history_service as price_history_module
 
 
 @pytest.fixture
@@ -272,6 +275,16 @@ def test_manual_price_sync_records_due_price_history(
 	assert db_session.query(CommercePriceSnapshot).count() == 3
 
 
+def test_manual_price_sync_returns_conflict_when_sync_is_already_running(
+	client: TestClient,
+) -> None:
+	with price_sync_lock.acquire("test"):
+		response = client.post("/api/sync/prices")
+
+	assert response.status_code == 409
+	assert response.json()["detail"] == "Trading Post price sync is already running."
+
+
 def test_price_history_config_pause_resume_and_estimate(
 	client: TestClient,
 	db_session: Session,
@@ -357,6 +370,124 @@ def test_price_history_relevance_and_ignore_controls(
 	restored_estimate_response = client.get("/api/sync/price-history/estimate")
 	assert restored_estimate_response.status_code == 200
 	assert restored_estimate_response.json()["tracked_item_count"] == 3
+
+
+def test_price_history_config_persists_across_service_instances(db_session: Session) -> None:
+	service = PriceHistoryService(db_session)
+	service.update_config(
+		{
+			"price_sync_interval_minutes": 45,
+			"raw_snapshot_retention_days": 21,
+			"snapshot_item_mode": "all",
+		}
+	)
+
+	reloaded_config = PriceHistoryService(db_session).get_config()
+
+	assert reloaded_config["price_sync_interval_minutes"] == 45
+	assert reloaded_config["raw_snapshot_retention_days"] == 21
+	assert reloaded_config["snapshot_item_mode"] == "all"
+
+
+def test_ignored_items_are_excluded_from_price_history_snapshots(db_session: Session) -> None:
+	seed_simple_recipe(db_session)
+	service = PriceHistoryService(db_session)
+	service.ignore_item(2, reason="not useful")
+
+	recorded_count = service.record_snapshot(observed_at=datetime.now(timezone.utc))
+	snapshot_item_ids = {
+		item_id
+		for item_id, in db_session.query(CommercePriceSnapshot.item_id).all()
+	}
+
+	assert recorded_count == 2
+	assert snapshot_item_ids == {1, 3}
+
+
+def test_price_history_pruning_rolls_up_and_removes_old_raw_snapshots(db_session: Session) -> None:
+	seed_simple_recipe(db_session)
+	service = PriceHistoryService(db_session)
+	now = datetime.now(timezone.utc)
+	old_hour = now.replace(minute=0, second=0, microsecond=0) - timedelta(days=2, hours=1)
+	new_hour = now - timedelta(hours=1)
+
+	db_session.add_all(
+		[
+			CommercePriceSnapshot(
+				item_id=1,
+				observed_at=old_hour,
+				buy_price=500,
+				buy_quantity=10,
+				sell_price=1000,
+				sell_quantity=20,
+			),
+			CommercePriceSnapshot(
+				item_id=1,
+				observed_at=old_hour + timedelta(minutes=15),
+				buy_price=520,
+				buy_quantity=12,
+				sell_price=1020,
+				sell_quantity=22,
+			),
+			CommercePriceSnapshot(
+				item_id=2,
+				observed_at=new_hour,
+				buy_price=100,
+				buy_quantity=10,
+				sell_price=200,
+				sell_quantity=20,
+			),
+		]
+	)
+	db_session.commit()
+	service.update_config({"raw_snapshot_retention_days": 1})
+
+	result = service.prune_history()
+
+	assert result["hourly_rollups_written"] >= 1
+	assert result["daily_rollups_written"] >= 1
+	assert result["raw_snapshots_deleted"] == 2
+	assert db_session.query(CommercePriceSnapshot).count() == 1
+
+	hourly_rollup = (
+		db_session.query(CommercePriceRollup)
+		.filter(CommercePriceRollup.bucket_type == "hour")
+		.first()
+	)
+	assert hourly_rollup is not None
+	assert hourly_rollup.sample_count == 2
+	assert hourly_rollup.sell_price_min == 1000
+	assert hourly_rollup.sell_price_max == 1020
+
+
+def test_price_history_max_size_pruning_removes_oldest_rows(
+	db_session: Session,
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	seed_simple_recipe(db_session)
+	service = PriceHistoryService(db_session)
+	now = datetime.now(timezone.utc)
+
+	for index, item_id in enumerate([1, 2, 3]):
+		db_session.add(
+			CommercePriceSnapshot(
+				item_id=item_id,
+				observed_at=now - timedelta(minutes=index),
+				buy_price=100 + index,
+				buy_quantity=10,
+				sell_price=200 + index,
+				sell_quantity=20,
+			)
+		)
+
+	db_session.commit()
+	service.update_config({"max_history_mb": 128})
+	monkeypatch.setattr(price_history_module, "BYTES_PER_MEGABYTE", 1)
+
+	result = service.prune_history()
+
+	assert result["raw_snapshots_deleted"] > 0
+	assert db_session.query(CommercePriceSnapshot).count() < 3
 
 
 def test_account_holdings_status_endpoint_reports_owned_totals(

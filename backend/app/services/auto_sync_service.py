@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
 from app.services.price_history_service import PriceHistoryService, normalize_datetime, utc_now
+from app.services.price_sync_lock import PriceSyncBusyError, price_sync_lock
 from app.services.sync_service import SyncService
 
 
@@ -16,7 +17,6 @@ class AutoPriceSyncService:
 	def __init__(self) -> None:
 		self._task: asyncio.Task | None = None
 		self._stop_event: asyncio.Event | None = None
-		self._sync_lock = threading.Lock()
 		self._state_lock = threading.Lock()
 		self._running = False
 		self._last_started_at: datetime | None = None
@@ -55,11 +55,15 @@ class AutoPriceSyncService:
 			interval_minutes=int(config["price_sync_interval_minutes"]),
 			enabled=bool(config["auto_price_sync_enabled"]),
 		)
+		sync_lock_status = price_sync_lock.status()
 
 		with self._state_lock:
 			return {
 				"enabled": bool(config["auto_price_sync_enabled"]),
-				"running": self._running,
+				"running": bool(sync_lock_status["running"]),
+				"running_source": sync_lock_status["source"],
+				"running_started_at": sync_lock_status["started_at"],
+				"auto_worker_running": self._running,
 				"interval_minutes": int(config["price_sync_interval_minutes"]),
 				"last_price_sync_at": last_price_sync_at,
 				"last_snapshot_at": last_snapshot_at,
@@ -91,9 +95,6 @@ class AutoPriceSyncService:
 			raise
 
 	def _run_once_blocking(self, force: bool) -> None:
-		if not self._sync_lock.acquire(blocking=False):
-			return
-
 		with self._state_lock:
 			self._running = True
 			self._last_started_at = utc_now()
@@ -111,10 +112,16 @@ class AutoPriceSyncService:
 			if not force and not self._is_due(last_price_sync_at, int(config["price_sync_interval_minutes"])):
 				return
 
-			result = SyncService(db).sync_prices_with_history()
+			result = SyncService(db).sync_prices_with_history(source="auto")
 
 			with self._state_lock:
 				self._last_result = result
+		except PriceSyncBusyError as exc:
+			with self._state_lock:
+				self._last_result = {
+					"status": "skipped",
+					"reason": str(exc),
+				}
 		except Exception as exc:
 			with self._state_lock:
 				self._last_error = str(exc)
@@ -124,8 +131,6 @@ class AutoPriceSyncService:
 			with self._state_lock:
 				self._running = False
 				self._last_finished_at = utc_now()
-
-			self._sync_lock.release()
 
 	def _is_due(self, last_price_sync_at: datetime | None, interval_minutes: int) -> bool:
 		last_price_sync_at = normalize_datetime(last_price_sync_at)

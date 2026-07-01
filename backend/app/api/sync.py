@@ -11,6 +11,7 @@ from app.models.item import Item
 from app.models.recipe import Recipe
 from app.services.auto_sync_service import auto_price_sync_service
 from app.services.price_history_service import PriceHistoryService
+from app.services.price_sync_lock import PriceSyncBusyError
 from app.services.sync_service import SyncService
 
 router = APIRouter(prefix="/api/sync", tags=["sync"])
@@ -46,7 +47,10 @@ def sync_recipes(db: Session = Depends(get_db)) -> dict[str, int | str]:
 @router.post("/prices")
 def sync_prices(db: Session = Depends(get_db)) -> dict:
 	service = SyncService(db)
-	return service.sync_prices_with_history()
+	try:
+		return service.sync_prices_with_history(source="manual")
+	except PriceSyncBusyError as exc:
+		raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/status")

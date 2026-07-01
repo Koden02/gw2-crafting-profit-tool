@@ -1,0 +1,63 @@
+# Release Notes
+
+## v0.1.11
+
+Stabilization checkpoint before `0.2.0`.
+
+### Highlights
+
+- Added shared Trading Post price-sync overlap protection across manual and automatic syncs.
+- Manual price sync now returns a conflict instead of starting while another price sync is active.
+- Automatic price sync reports shared running status, source, and start time.
+- Expanded backend coverage for price-history behavior:
+  - manual sync snapshot capture
+  - sync overlap conflict
+  - config persistence
+  - ignored items excluded from snapshots
+  - raw snapshot rollup and retention pruning
+  - max estimated history-size pruning
+  - relevance and ignore/restore controls
+- Updated frontend API handling so sync-conflict messages surface clearly.
+
+### Release Checklist
+
+```powershell
+cd backend
+venv\Scripts\python.exe -m pytest
+```
+
+```powershell
+cd frontend
+npm run lint
+npm run build
+```
+
+Manual smoke checks:
+
+- Start backend and frontend.
+- Confirm `/api/health` returns `{"status":"ok"}`.
+- Confirm `/api/sync/auto-price/status` returns automatic price-sync status.
+- Confirm the frontend Data Sync panel shows automatic price history controls.
+- Pause and resume automatic price sync from the frontend.
+- Run manual `Sync Prices` and confirm the status refreshes.
+
+### Notes
+
+- Automatic price sync defaults to 15 minutes.
+- Raw price snapshots default to relevant items only.
+- Raw snapshots default to 14 days of retention.
+- Hourly rollups default to 90 days.
+- Daily rollups default to 365 days.
+- Max estimated history storage defaults to 5120 MB.
+
+## v0.1.10
+
+- Added server-side automatic Trading Post price sync.
+- Added configurable local price history snapshots and rollups.
+- Added storage estimates and ignored-item controls.
+
+## v0.1.9
+
+- Added API smoke coverage.
+- Hid debug endpoints from generated OpenAPI docs.
+- Improved empty states in the profitable crafts table.

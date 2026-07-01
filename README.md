@@ -5,13 +5,13 @@
 ![React](https://img.shields.io/badge/React-frontend-blue)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 ![Status](https://img.shields.io/badge/status-early%20development-orange)
-![Version](https://img.shields.io/badge/version-0.1.10-blue)
+![Version](https://img.shields.io/badge/version-0.1.11-blue)
 
 GW2 Craft Profit Tool is a local full-stack app for analyzing Guild Wars 2 crafting profitability using the official Guild Wars 2 API, SQLite, recursive recipe costing, and Trading Post prices.
 
-Project status: Early Development v0.1.10.
+Project status: Early Development v0.1.11.
 
-The v0.1.10 release is focused on local data sync, automatic server-side price refresh, configurable local price history snapshots and rollups, craft profitability analysis, pricing assumptions, Trading Post depth visibility, table-level risk signals, owned-material adjusted batch planning, saved filters, watchlists, endpoint smoke coverage, and a usable frontend for browsing profitable crafts. Full inventory-aware table ranking, historical price charting, and packaging are planned future work.
+The v0.1.11 release is focused on local data sync, automatic server-side price refresh, configurable local price history snapshots and rollups, sync overlap protection, craft profitability analysis, pricing assumptions, Trading Post depth visibility, table-level risk signals, owned-material adjusted batch planning, saved filters, watchlists, endpoint smoke coverage, and a usable frontend for browsing profitable crafts. Full inventory-aware table ranking, historical price charting, and packaging are planned future work.
 
 ## Implemented Features
 
@@ -31,7 +31,7 @@ The v0.1.10 release is focused on local data sync, automatic server-side price r
   - profitable instant-sell depth
   - competing profitable sell-listing quantity
   - market pressure label
-- Server-side automatic Trading Post price sync with pause/resume controls.
+- Server-side automatic Trading Post price sync with pause/resume controls and shared overlap protection for manual and automatic price syncs.
 - Local price history capture:
   - configurable sync interval
   - configurable raw snapshot retention
@@ -177,7 +177,7 @@ Recommended first sync order from the frontend:
 
 Items and recipes are the slower first-run datasets. Prices are the normal refresh before checking profitability.
 
-The backend also runs automatic price refresh on the configured interval. The default is every 15 minutes. Automatic price sync can be paused or resumed from the frontend, and price history can be limited by retention days, rollup retention, max estimated history size, tracked item mode, and ignored items.
+The backend also runs automatic price refresh on the configured interval. The default is every 15 minutes. Automatic price sync can be paused or resumed from the frontend, and price history can be limited by retention days, rollup retention, max estimated history size, tracked item mode, and ignored items. Manual and automatic price syncs share one lock, so only one Trading Post price sync can run at a time.
 
 The same sync actions are available as API calls:
 
@@ -255,7 +255,7 @@ npm run lint
 
 ## Current Limitations
 
-Not implemented in v0.1.10:
+Not implemented in v0.1.11:
 
 - Full inventory-aware table ranking.
 - Historical price charts and trend scoring.
@@ -269,6 +269,7 @@ Additional planning docs are in `docs/`:
 - `PROJECT_PLAN.md`
 - `TECHNICAL_SPEC.md`
 - `IMPLEMENTATION_ORDER.md`
+- `RELEASE_NOTES.md`
 
 ## Disclaimer
 

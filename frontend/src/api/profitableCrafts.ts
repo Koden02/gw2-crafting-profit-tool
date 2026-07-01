@@ -91,6 +91,9 @@ export type PriceHistoryConfig = {
 export type AutoPriceSyncStatus = {
 	enabled: boolean
 	running: boolean
+	running_source: string | null
+	running_started_at: string | null
+	auto_worker_running: boolean
 	interval_minutes: number
 	last_price_sync_at: string | null
 	last_snapshot_at: string | null
@@ -419,7 +422,9 @@ export async function syncCommercePrices(): Promise<PriceSyncResult> {
 	})
 
 	if (!response.ok) {
-		throw new Error(`Failed to sync Trading Post prices: ${response.status}`)
+		const detail = await response.json().catch(() => null)
+		const message = typeof detail?.detail === "string" ? detail.detail : `Failed to sync Trading Post prices: ${response.status}`
+		throw new Error(message)
 	}
 
 	return response.json()
