@@ -12,6 +12,7 @@ from app.models.recipe_ingredient import RecipeIngredient
 from app.models.commerce_price import CommercePrice
 from app.services.batching import chunk_list
 from app.services.gw2_client import GW2Client
+from app.services.price_history_service import PriceHistoryService
 
 
 class SyncService:
@@ -119,3 +120,19 @@ class SyncService:
 			self.db.commit()
 
 		return total_upserted
+
+	def sync_prices_with_history(self, batch_size: int = 200) -> dict[str, object]:
+		total_upserted = self.sync_prices(batch_size=batch_size)
+		history_service = PriceHistoryService(self.db)
+		snapshot_result = history_service.record_snapshot_if_due()
+		prune_result = history_service.prune_history()
+
+		return {
+			"status": "ok",
+			"prices_upserted": total_upserted,
+			"snapshot_status": snapshot_result["status"],
+			"snapshot_reason": snapshot_result["reason"],
+			"snapshots_recorded": snapshot_result["snapshots_recorded"],
+			"snapshot_observed_at": snapshot_result["observed_at"],
+			"history_pruned": prune_result,
+		}

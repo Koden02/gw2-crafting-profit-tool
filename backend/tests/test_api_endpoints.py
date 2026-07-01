@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 from app.db.base import Base
 from app.db.dependencies import get_db
 from app.main import app
-from app.models import AccountHolding, CommercePrice, Item, Recipe, RecipeIngredient
+from app.models import AccountHolding, CommercePrice, CommercePriceSnapshot, Item, Recipe, RecipeIngredient
 from app.services.gw2_client import GW2Client
 
 
@@ -238,6 +238,125 @@ def test_sync_status_endpoint_reports_cache_counts(
 	assert body["recipe_count"] == 1
 	assert body["price_count"] == 3
 	assert body["price_last_updated"] is not None
+
+
+def test_manual_price_sync_records_due_price_history(
+	client: TestClient,
+	db_session: Session,
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	seed_simple_recipe(db_session)
+
+	def fake_fetch_all_commerce_price_ids(self: GW2Client) -> list[int]:
+		return [1, 2, 3]
+
+	def fake_fetch_commerce_prices_by_ids(self: GW2Client, item_ids: list[int]) -> list[dict]:
+		return [
+			{
+				"id": item_id,
+				"buys": {"unit_price": 500 + item_id, "quantity": 10},
+				"sells": {"unit_price": 1000 + item_id, "quantity": 20},
+			}
+			for item_id in item_ids
+		]
+
+	monkeypatch.setattr(GW2Client, "fetch_all_commerce_price_ids", fake_fetch_all_commerce_price_ids)
+	monkeypatch.setattr(GW2Client, "fetch_commerce_prices_by_ids", fake_fetch_commerce_prices_by_ids)
+
+	response = client.post("/api/sync/prices")
+
+	assert response.status_code == 200
+	body = response.json()
+	assert body["prices_upserted"] == 3
+	assert body["snapshots_recorded"] == 3
+	assert db_session.query(CommercePriceSnapshot).count() == 3
+
+
+def test_price_history_config_pause_resume_and_estimate(
+	client: TestClient,
+	db_session: Session,
+) -> None:
+	seed_simple_recipe(db_session)
+
+	status_response = client.get("/api/sync/auto-price/status")
+	assert status_response.status_code == 200
+	assert status_response.json()["enabled"] is True
+	assert status_response.json()["interval_minutes"] == 15
+
+	pause_response = client.post("/api/sync/auto-price/pause")
+	assert pause_response.status_code == 200
+	assert pause_response.json()["enabled"] is False
+
+	config_response = client.patch(
+		"/api/sync/price-history/config",
+		json={
+			"price_sync_interval_minutes": 30,
+			"raw_snapshot_retention_days": 7,
+			"max_history_mb": 256,
+			"snapshot_item_mode": "all",
+		},
+	)
+	assert config_response.status_code == 200
+	config = config_response.json()
+	assert config["price_sync_interval_minutes"] == 30
+	assert config["raw_snapshot_retention_days"] == 7
+	assert config["max_history_mb"] == 256
+	assert config["snapshot_item_mode"] == "all"
+
+	estimate_response = client.get("/api/sync/price-history/estimate")
+	assert estimate_response.status_code == 200
+	estimate = estimate_response.json()
+	assert estimate["tracked_item_count"] == 3
+	assert estimate["runs_per_day"] == 48
+	assert estimate["estimated_total_retention_mb"] > 0
+
+	resume_response = client.post("/api/sync/auto-price/resume")
+	assert resume_response.status_code == 200
+	assert resume_response.json()["enabled"] is True
+
+
+def test_price_history_relevance_and_ignore_controls(
+	client: TestClient,
+	db_session: Session,
+) -> None:
+	seed_simple_recipe(db_session)
+	add_item(db_session, 4, "Unused Item")
+	add_price(db_session, 4, buy_price=1, sell_price=2)
+	db_session.commit()
+
+	relevance_response = client.get("/api/sync/price-history/relevance", params={"filter": "relevant"})
+
+	assert relevance_response.status_code == 200
+	relevance = relevance_response.json()
+	assert relevance["total"] == 3
+	assert {item["item_id"] for item in relevance["items"]} == {1, 2, 3}
+	assert all(item["is_tracked"] for item in relevance["items"])
+
+	ignore_response = client.post("/api/sync/price-history/ignore/2", json={"reason": "not useful"})
+	assert ignore_response.status_code == 200
+	assert ignore_response.json()["ignored"] is True
+
+	estimate_response = client.get("/api/sync/price-history/estimate")
+	assert estimate_response.status_code == 200
+	estimate = estimate_response.json()
+	assert estimate["ignored_item_count"] == 1
+	assert estimate["tracked_item_count"] == 2
+
+	ignored_response = client.get("/api/sync/price-history/relevance", params={"filter": "ignored"})
+	assert ignored_response.status_code == 200
+	ignored_items = ignored_response.json()["items"]
+	assert len(ignored_items) == 1
+	assert ignored_items[0]["item_id"] == 2
+	assert ignored_items[0]["is_ignored"] is True
+	assert ignored_items[0]["is_tracked"] is False
+
+	restore_response = client.delete("/api/sync/price-history/ignore/2")
+	assert restore_response.status_code == 200
+	assert restore_response.json()["ignored"] is False
+
+	restored_estimate_response = client.get("/api/sync/price-history/estimate")
+	assert restored_estimate_response.status_code == 200
+	assert restored_estimate_response.json()["tracked_item_count"] == 3
 
 
 def test_account_holdings_status_endpoint_reports_owned_totals(

@@ -75,9 +75,82 @@ export type SyncStatus = {
 	recipe_count: number
 }
 
+export type SnapshotItemMode = "relevant" | "all"
+export type PriceHistoryRelevanceFilter = "all" | "relevant" | "ignored" | "untracked"
+
+export type PriceHistoryConfig = {
+	auto_price_sync_enabled: boolean
+	price_sync_interval_minutes: number
+	raw_snapshot_retention_days: number
+	hourly_rollup_retention_days: number
+	daily_rollup_retention_days: number
+	max_history_mb: number
+	snapshot_item_mode: SnapshotItemMode
+}
+
+export type AutoPriceSyncStatus = {
+	enabled: boolean
+	running: boolean
+	interval_minutes: number
+	last_price_sync_at: string | null
+	last_snapshot_at: string | null
+	next_due_at: string | null
+	last_started_at: string | null
+	last_finished_at: string | null
+	last_error: string | null
+	last_result: Record<string, unknown> | null
+}
+
+export type PriceHistoryEstimate = {
+	config: PriceHistoryConfig
+	price_count: number
+	relevant_price_item_count: number
+	ignored_item_count: number
+	tracked_item_count: number
+	runs_per_day: number
+	raw_rows_per_day: number
+	estimated_raw_mb_per_day: number
+	estimated_raw_retention_mb: number
+	estimated_hourly_rollup_mb: number
+	estimated_daily_rollup_mb: number
+	estimated_total_retention_mb: number
+	current_raw_snapshot_count: number
+	current_hourly_rollup_count: number
+	current_daily_rollup_count: number
+	current_history_estimated_mb: number
+	database_file_mb: number
+	max_history_mb: number
+	snapshot_row_estimated_bytes: number
+	rollup_row_estimated_bytes: number
+}
+
+export type PriceHistoryRelevanceItem = {
+	item_id: number
+	name: string
+	has_price: boolean
+	is_relevant: boolean
+	is_ignored: boolean
+	is_tracked: boolean
+	reasons: string[]
+}
+
+export type PriceHistoryRelevanceResponse = {
+	items: PriceHistoryRelevanceItem[]
+	total: number
+	limit: number
+	offset: number
+	filter: PriceHistoryRelevanceFilter
+	search: string
+}
+
 export type PriceSyncResult = {
 	status: string
 	prices_upserted: number
+	snapshot_status?: string
+	snapshot_reason?: string | null
+	snapshots_recorded?: number
+	snapshot_observed_at?: string | null
+	history_pruned?: Record<string, number>
 }
 
 export type ItemSyncResult = {
@@ -213,6 +286,128 @@ export async function fetchSyncStatus(): Promise<SyncStatus> {
 
 	if (!response.ok) {
 		throw new Error(`Failed to fetch sync status: ${response.status}`)
+	}
+
+	return response.json()
+}
+
+export async function fetchAutoPriceSyncStatus(): Promise<AutoPriceSyncStatus> {
+	const response = await fetch(`${API_BASE_URL}/api/sync/auto-price/status`)
+
+	if (!response.ok) {
+		throw new Error(`Failed to fetch automatic price sync status: ${response.status}`)
+	}
+
+	return response.json()
+}
+
+export async function pauseAutoPriceSync(): Promise<AutoPriceSyncStatus> {
+	const response = await fetch(`${API_BASE_URL}/api/sync/auto-price/pause`, {
+		method: "POST",
+	})
+
+	if (!response.ok) {
+		throw new Error(`Failed to pause automatic price sync: ${response.status}`)
+	}
+
+	return response.json()
+}
+
+export async function resumeAutoPriceSync(): Promise<AutoPriceSyncStatus> {
+	const response = await fetch(`${API_BASE_URL}/api/sync/auto-price/resume`, {
+		method: "POST",
+	})
+
+	if (!response.ok) {
+		throw new Error(`Failed to resume automatic price sync: ${response.status}`)
+	}
+
+	return response.json()
+}
+
+export async function fetchPriceHistoryConfig(): Promise<PriceHistoryConfig> {
+	const response = await fetch(`${API_BASE_URL}/api/sync/price-history/config`)
+
+	if (!response.ok) {
+		throw new Error(`Failed to fetch price history config: ${response.status}`)
+	}
+
+	return response.json()
+}
+
+export async function updatePriceHistoryConfig(
+	config: Partial<PriceHistoryConfig>,
+): Promise<PriceHistoryConfig> {
+	const response = await fetch(`${API_BASE_URL}/api/sync/price-history/config`, {
+		method: "PATCH",
+		headers: {
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify(config),
+	})
+
+	if (!response.ok) {
+		throw new Error(`Failed to update price history config: ${response.status}`)
+	}
+
+	return response.json()
+}
+
+export async function fetchPriceHistoryEstimate(): Promise<PriceHistoryEstimate> {
+	const response = await fetch(`${API_BASE_URL}/api/sync/price-history/estimate`)
+
+	if (!response.ok) {
+		throw new Error(`Failed to fetch price history estimate: ${response.status}`)
+	}
+
+	return response.json()
+}
+
+export async function fetchPriceHistoryRelevance(options: {
+	search?: string
+	filter?: PriceHistoryRelevanceFilter
+	limit?: number
+	offset?: number
+} = {}): Promise<PriceHistoryRelevanceResponse> {
+	const params = new URLSearchParams()
+
+	if (options.search) params.set("search", options.search)
+	if (options.filter) params.set("filter", options.filter)
+	if (options.limit !== undefined) params.set("limit", String(options.limit))
+	if (options.offset !== undefined) params.set("offset", String(options.offset))
+
+	const response = await fetch(`${API_BASE_URL}/api/sync/price-history/relevance?${params.toString()}`)
+
+	if (!response.ok) {
+		throw new Error(`Failed to fetch price history relevance: ${response.status}`)
+	}
+
+	return response.json()
+}
+
+export async function ignorePriceHistoryItem(itemId: number): Promise<{ status: string; item_id: number; ignored: boolean }> {
+	const response = await fetch(`${API_BASE_URL}/api/sync/price-history/ignore/${itemId}`, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify({}),
+	})
+
+	if (!response.ok) {
+		throw new Error(`Failed to ignore item for price history: ${response.status}`)
+	}
+
+	return response.json()
+}
+
+export async function restorePriceHistoryItem(itemId: number): Promise<{ status: string; item_id: number; ignored: boolean }> {
+	const response = await fetch(`${API_BASE_URL}/api/sync/price-history/ignore/${itemId}`, {
+		method: "DELETE",
+	})
+
+	if (!response.ok) {
+		throw new Error(`Failed to restore item for price history: ${response.status}`)
 	}
 
 	return response.json()

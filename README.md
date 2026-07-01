@@ -5,13 +5,13 @@
 ![React](https://img.shields.io/badge/React-frontend-blue)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 ![Status](https://img.shields.io/badge/status-early%20development-orange)
-![Version](https://img.shields.io/badge/version-0.1.9-blue)
+![Version](https://img.shields.io/badge/version-0.1.10-blue)
 
 GW2 Craft Profit Tool is a local full-stack app for analyzing Guild Wars 2 crafting profitability using the official Guild Wars 2 API, SQLite, recursive recipe costing, and Trading Post prices.
 
-Project status: Early Development v0.1.9.
+Project status: Early Development v0.1.10.
 
-The v0.1.9 release is focused on local data sync, craft profitability analysis, pricing assumptions, Trading Post depth visibility, table-level risk signals, owned-material adjusted batch planning, saved filters, watchlists, endpoint smoke coverage, and a usable frontend for browsing profitable crafts. Full inventory-aware table ranking, historical pricing, and packaging are planned future work.
+The v0.1.10 release is focused on local data sync, automatic server-side price refresh, configurable local price history snapshots and rollups, craft profitability analysis, pricing assumptions, Trading Post depth visibility, table-level risk signals, owned-material adjusted batch planning, saved filters, watchlists, endpoint smoke coverage, and a usable frontend for browsing profitable crafts. Full inventory-aware table ranking, historical price charting, and packaging are planned future work.
 
 ## Implemented Features
 
@@ -31,6 +31,15 @@ The v0.1.9 release is focused on local data sync, craft profitability analysis, 
   - profitable instant-sell depth
   - competing profitable sell-listing quantity
   - market pressure label
+- Server-side automatic Trading Post price sync with pause/resume controls.
+- Local price history capture:
+  - configurable sync interval
+  - configurable raw snapshot retention
+  - hourly and daily rollup retention settings
+  - maximum history size setting with pruning
+  - storage estimates based on tracked item count
+  - relevant-only or all-priced-item snapshot modes
+  - ignored-item controls for excluding unwanted items from future snapshots
 - Craft vs sell ingredients comparison:
   - `ingredient_sale_value`
   - `crafted_item_value`
@@ -47,6 +56,7 @@ The v0.1.9 release is focused on local data sync, craft profitability analysis, 
   - table-level risk signals and on-demand visible-row depth loading
   - sync status visibility
   - frontend sync controls for items, recipes, and Trading Post prices
+  - automatic price-history status, retention, estimate, relevance, and ignore controls
   - read-only account holdings sync for material storage and bank inventory
   - batch craft planner with missing-material shopping list
   - out-of-pocket batch profit and owned-material coverage in the planner
@@ -167,6 +177,8 @@ Recommended first sync order from the frontend:
 
 Items and recipes are the slower first-run datasets. Prices are the normal refresh before checking profitability.
 
+The backend also runs automatic price refresh on the configured interval. The default is every 15 minutes. Automatic price sync can be paused or resumed from the frontend, and price history can be limited by retention days, rollup retention, max estimated history size, tracked item mode, and ignored items.
+
 The same sync actions are available as API calls:
 
 ```powershell
@@ -243,10 +255,10 @@ npm run lint
 
 ## Current Limitations
 
-Not implemented in v0.1.9:
+Not implemented in v0.1.10:
 
 - Full inventory-aware table ranking.
-- Historical price charts.
+- Historical price charts and trend scoring.
 - Price stability scoring.
 - Docker or packaged desktop distribution.
 

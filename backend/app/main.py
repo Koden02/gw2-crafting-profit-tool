@@ -9,12 +9,18 @@ from app.api.profitable_crafts import router as profitable_crafts_router
 from app.api.profit import router as profit_router
 from app.api.sync import router as sync_router
 from app.db.init_db import init_db
+from app.services.auto_sync_service import auto_price_sync_service
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
 	init_db()
-	yield
+	auto_price_sync_service.start()
+
+	try:
+		yield
+	finally:
+		await auto_price_sync_service.stop()
 
 
 app = FastAPI(
