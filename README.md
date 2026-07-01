@@ -5,13 +5,13 @@
 ![React](https://img.shields.io/badge/React-frontend-blue)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 ![Status](https://img.shields.io/badge/status-early%20development-orange)
-![Version](https://img.shields.io/badge/version-0.1.7-blue)
+![Version](https://img.shields.io/badge/version-0.1.8-blue)
 
 GW2 Craft Profit Tool is a local full-stack app for analyzing Guild Wars 2 crafting profitability using the official Guild Wars 2 API, SQLite, recursive recipe costing, and Trading Post prices.
 
-Project status: Early Development v0.1.7.
+Project status: Early Development v0.1.8.
 
-The v0.1.7 release is focused on local data sync, craft profitability analysis, pricing assumptions, Trading Post depth visibility, owned-material adjusted batch planning, saved filters, watchlists, and a usable frontend for browsing profitable crafts. Full inventory-aware table ranking, historical pricing, and packaging are planned future work.
+The v0.1.8 release is focused on local data sync, craft profitability analysis, pricing assumptions, Trading Post depth visibility, table-level risk signals, owned-material adjusted batch planning, saved filters, watchlists, and a usable frontend for browsing profitable crafts. Full inventory-aware table ranking, historical pricing, and packaging are planned future work.
 
 ## Implemented Features
 
@@ -44,6 +44,7 @@ The v0.1.7 release is focused on local data sync, craft profitability analysis, 
   - item name search over currently loaded rows
   - local watchlist with watchlist-only filtering
   - saved local filter presets
+  - table-level risk signals and on-demand visible-row depth loading
   - sync status visibility
   - frontend sync controls for items, recipes, and Trading Post prices
   - read-only account holdings sync for material storage and bank inventory
@@ -233,7 +234,7 @@ npm run lint
 
 ## Current Limitations
 
-Not implemented in v0.1.7:
+Not implemented in v0.1.8:
 
 - Full inventory-aware table ranking.
 - Historical price charts.

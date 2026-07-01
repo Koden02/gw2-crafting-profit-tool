@@ -66,6 +66,7 @@ const priceDataStaleAfterMs = 60 * 60 * 1000
 const accountApiKeyStorageKey = "gw2-profit-api-key"
 const watchlistStorageKey = "gw2-profit-watchlist"
 const filterPresetsStorageKey = "gw2-profit-filter-presets"
+const tableDepthLoadLimit = 25
 
 type SavedFilterSettings = {
 	limit: number
@@ -128,6 +129,10 @@ const compactMetricSx = {
 	borderRadius: 2,
 	bgcolor: "rgba(255, 255, 255, 0.72)",
 	p: 1.25,
+}
+
+function listingDepthCacheKey(itemId: number, materialPricing: MaterialPricingMode): string {
+	return `${itemId}:${materialPricing}`
 }
 
 function formatAge(valueMs: number): string {
@@ -386,6 +391,11 @@ export default function ProfitableCraftsPage() {
 	const [scenarioRows, setScenarioRows] = useState<ProfitScenario[]>([])
 	const [listingDepth, setListingDepth] = useState<ListingDepthAnalysis | null>(null)
 	const [listingDepthError, setListingDepthError] = useState<string | null>(null)
+	const [tableDepthByKey, setTableDepthByKey] = useState<Record<string, ListingDepthAnalysis>>({})
+	const [tableDepthErrorsByKey, setTableDepthErrorsByKey] = useState<Record<string, string>>({})
+	const [tableDepthLoading, setTableDepthLoading] = useState(false)
+	const [tableDepthLoadedCount, setTableDepthLoadedCount] = useState(0)
+	const [tableDepthMessage, setTableDepthMessage] = useState<string | null>(null)
 	const [detailLoading, setDetailLoading] = useState(false)
 	const [detailError, setDetailError] = useState<string | null>(null)
 	const [batchOutputCount, setBatchOutputCount] = useState(1)
@@ -732,6 +742,65 @@ export default function ProfitableCraftsPage() {
 		return "default"
 	}
 
+	function tableDepthForRow(row: ProfitableCraft): ListingDepthAnalysis | undefined {
+		return tableDepthByKey[listingDepthCacheKey(row.item_id, materialPricing)]
+	}
+
+	function tableDepthErrorForRow(row: ProfitableCraft): string | undefined {
+		return tableDepthErrorsByKey[listingDepthCacheKey(row.item_id, materialPricing)]
+	}
+
+	function RiskChips({
+		depth,
+		row,
+	}: {
+		depth: ListingDepthAnalysis | undefined
+		row: ProfitableCraft
+	}) {
+		const chips: Array<{
+			color: "success" | "warning" | "error" | "default"
+			label: string
+		}> = []
+
+		if (row.low_liquidity) {
+			chips.push({ color: "warning", label: "Low Liquidity" })
+		}
+
+		if (row.suspicious_spread) {
+			chips.push({ color: "error", label: "Wide Spread" })
+		}
+
+		if (depth !== undefined) {
+			chips.push({
+				color: marketPressureChipColor(depth.estimated_market_pressure),
+				label: depth.estimated_market_pressure,
+			})
+
+			if (depth.instant_sell_limit_quantity === 0) {
+				chips.push({ color: "error", label: "No Instant Depth" })
+			}
+		}
+
+		if (chips.length === 0) {
+			chips.push({ color: "success", label: "Clear" })
+		}
+
+		return (
+			<Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+				{chips.map((chip) => (
+					<Chip
+						key={chip.label}
+						color={chip.color}
+						label={chip.label}
+						size="small"
+						variant={chip.label === "Clear" ? "outlined" : "filled"}
+						sx={{ fontWeight: 700 }}
+					/>
+				))}
+			</Stack>
+		)
+	}
+
 	function signedValueColor(value: number): string {
 		if (value > 0) {
 			return "success.main"
@@ -944,6 +1013,57 @@ export default function ProfitableCraftsPage() {
 
 		return copied
 	}, [filteredRows, sortDirection, sortKey])
+
+	async function handleLoadTableDepth() {
+		const rowsToLoad = sortedRows
+			.filter((row) => {
+				const cacheKey = listingDepthCacheKey(row.item_id, materialPricing)
+				return tableDepthByKey[cacheKey] === undefined && tableDepthErrorsByKey[cacheKey] === undefined
+			})
+			.slice(0, tableDepthLoadLimit)
+
+		if (rowsToLoad.length === 0) {
+			setTableDepthMessage("Depth is already loaded for the current top rows.")
+			return
+		}
+
+		setTableDepthLoading(true)
+		setTableDepthLoadedCount(0)
+		setTableDepthMessage(null)
+
+		let processedCount = 0
+
+		try {
+			for (const row of rowsToLoad) {
+				const cacheKey = listingDepthCacheKey(row.item_id, materialPricing)
+
+				try {
+					const depth = await fetchListingDepth(row.item_id, {
+						material_pricing: materialPricing,
+					})
+					setTableDepthByKey((current) => ({
+						...current,
+						[cacheKey]: depth,
+					}))
+				} catch (err) {
+					const message = err instanceof Error ? err.message : "Unable to load listing depth."
+					setTableDepthErrorsByKey((current) => ({
+						...current,
+						[cacheKey]: message,
+					}))
+				} finally {
+					processedCount += 1
+					setTableDepthLoadedCount(processedCount)
+				}
+			}
+
+			setTableDepthMessage(
+				`Loaded Trading Post depth for ${formatNumber(rowsToLoad.length)} table row${rowsToLoad.length === 1 ? "" : "s"}.`,
+			)
+		} finally {
+			setTableDepthLoading(false)
+		}
+	}
 
 	const summaryHighlights = useMemo(() => {
 		if (filteredRows.length === 0) {
@@ -1589,6 +1709,72 @@ export default function ProfitableCraftsPage() {
 				)}
 
 				{!loading && !error && (
+					<Paper
+						elevation={1}
+						sx={{
+							bgcolor: warmPanel,
+							border: "1px solid rgba(98, 63, 24, 0.12)",
+							borderRadius: 2,
+							p: 2,
+						}}
+					>
+						<Stack
+							direction={{ xs: "column", md: "row" }}
+							justifyContent="space-between"
+							spacing={1.5}
+						>
+							<Box>
+								<Typography
+									variant="subtitle2"
+									sx={{ color: "#5a3d1f", fontWeight: 800, textTransform: "uppercase" }}
+								>
+									Table Risk Signals
+								</Typography>
+								<Typography variant="body2" color="text.secondary">
+									Low-liquidity and spread flags are immediate. Market depth columns load on demand for up to{" "}
+									{formatNumber(tableDepthLoadLimit)} current rows.
+								</Typography>
+							</Box>
+
+							<Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ sm: "center" }}>
+								<Button
+									variant="outlined"
+									disabled={tableDepthLoading || sortedRows.length === 0}
+									onClick={() => void handleLoadTableDepth()}
+									sx={{
+										borderColor: accentColor,
+										color: accentColor,
+										minHeight: 40,
+										"&:hover": {
+											borderColor: "#8d5e25",
+											bgcolor: "rgba(165, 111, 44, 0.08)",
+										},
+									}}
+								>
+									{tableDepthLoading ? (
+										<Stack direction="row" spacing={1} alignItems="center">
+											<CircularProgress color="inherit" size={16} />
+											<span>
+												Loading {formatNumber(tableDepthLoadedCount)}/
+												{formatNumber(Math.min(tableDepthLoadLimit, sortedRows.length))}
+											</span>
+										</Stack>
+									) : (
+										"Load Visible Depth"
+									)}
+								</Button>
+							</Stack>
+						</Stack>
+
+						{tableDepthMessage && (
+							<Typography variant="caption" color="text.secondary">
+								{tableDepthMessage}
+							</Typography>
+						)}
+					</Paper>
+				)}
+
+				{!loading && !error && (
 					<TableContainer
 						component={Paper}
 						elevation={2}
@@ -1599,11 +1785,15 @@ export default function ProfitableCraftsPage() {
 							maxHeight: "calc(100vh - 360px)",
 						}}
 					>
-						<Table stickyHeader size="small" sx={{ minWidth: 1500 }}>
+						<Table stickyHeader size="small" sx={{ minWidth: 1900 }}>
 							<TableHead>
 								<TableRow>
 									<SortableHeader label="Name" sortKey="name" sx={stickyNameHeaderSx} />
 									<TableCell sx={tableHeaderCellSx}>Watch</TableCell>
+									<TableCell sx={tableHeaderCellSx}>Risk</TableCell>
+									<TableCell sx={tableHeaderCellSx}>Pressure</TableCell>
+									<TableCell align="right" sx={tableHeaderCellSx}>Instant Limit</TableCell>
+									<TableCell align="right" sx={tableHeaderCellSx}>Depth Profit</TableCell>
 									<TableCell sx={tableHeaderCellSx}>Disciplines</TableCell>
 									<SortableHeader align="right" label="Craft Cost" sortKey="craft_cost" />
 									<SortableHeader align="right" label="Sell Price" sortKey="sell_price" />
@@ -1627,69 +1817,107 @@ export default function ProfitableCraftsPage() {
 								</TableRow>
 							</TableHead>
 							<TableBody>
-								{sortedRows.map((row) => (
-									<TableRow
-										key={row.item_id}
-										hover
-										onClick={() => void handleSelectItem(row.item_id)}
-										sx={{ ...zebraRowSx, cursor: "pointer" }}
-									>
-										<TableCell sx={stickyNameCellSx}>{row.name}</TableCell>
-										<TableCell>
-											<Button
-												variant={watchlistIdSet.has(row.item_id) ? "contained" : "outlined"}
-												size="small"
-												onClick={(event) => {
-													event.stopPropagation()
-													handleToggleWatchlistItem(row.item_id)
-												}}
+								{sortedRows.map((row) => {
+									const depth = tableDepthForRow(row)
+									const depthError = tableDepthErrorForRow(row)
+
+									return (
+										<TableRow
+											key={row.item_id}
+											hover
+											onClick={() => void handleSelectItem(row.item_id)}
+											sx={{ ...zebraRowSx, cursor: "pointer" }}
+										>
+											<TableCell sx={stickyNameCellSx}>{row.name}</TableCell>
+											<TableCell>
+												<Button
+													variant={watchlistIdSet.has(row.item_id) ? "contained" : "outlined"}
+													size="small"
+													onClick={(event) => {
+														event.stopPropagation()
+														handleToggleWatchlistItem(row.item_id)
+													}}
+													sx={{
+														bgcolor: watchlistIdSet.has(row.item_id) ? accentColor : "transparent",
+														borderColor: accentColor,
+														color: watchlistIdSet.has(row.item_id) ? "#fff" : accentColor,
+														minWidth: 88,
+														"&:hover": {
+															bgcolor: watchlistIdSet.has(row.item_id)
+																? "#8d5e25"
+																: "rgba(165, 111, 44, 0.08)",
+															borderColor: "#8d5e25",
+														},
+													}}
+												>
+													{watchlistIdSet.has(row.item_id) ? "Watching" : "Watch"}
+												</Button>
+											</TableCell>
+											<TableCell>
+												<RiskChips depth={depth} row={row} />
+											</TableCell>
+											<TableCell>
+												{depth ? (
+													<Chip
+														label={depth.estimated_market_pressure}
+														color={marketPressureChipColor(depth.estimated_market_pressure)}
+														size="small"
+														sx={{ fontWeight: 700 }}
+													/>
+												) : (
+													<Typography
+														variant="caption"
+														color={depthError ? "error.main" : "text.secondary"}
+														title={depthError}
+													>
+														{depthError ? "Depth error" : "Not loaded"}
+													</Typography>
+												)}
+											</TableCell>
+											<TableCell align="right">
+												{depth ? formatNumber(depth.instant_sell_limit_quantity) : "-"}
+											</TableCell>
+											<TableCell
+												align="right"
 												sx={{
-													bgcolor: watchlistIdSet.has(row.item_id) ? accentColor : "transparent",
-													borderColor: accentColor,
-													color: watchlistIdSet.has(row.item_id) ? "#fff" : accentColor,
-													minWidth: 88,
-													"&:hover": {
-														bgcolor: watchlistIdSet.has(row.item_id)
-															? "#8d5e25"
-															: "rgba(165, 111, 44, 0.08)",
-														borderColor: "#8d5e25",
-													},
+													color: depth ? signedValueColor(depth.instant_sell_depth_profit) : "text.secondary",
+													fontWeight: depth ? 700 : 400,
 												}}
 											>
-												{watchlistIdSet.has(row.item_id) ? "Watching" : "Watch"}
-											</Button>
-										</TableCell>
-										<TableCell>{row.disciplines.join(", ")}</TableCell>
-										<TableCell align="right">{formatCoins(row.craft_cost)}</TableCell>
-										<TableCell align="right">{formatCoins(row.sell_price)}</TableCell>
-										<TableCell align="right">{formatCoins(row.net_sale)}</TableCell>
-										<TableCell align="right">{formatCoins(row.ingredient_sale_value)}</TableCell>
-										<TableCell align="right">{formatCoins(row.crafted_item_value)}</TableCell>
-										<TableCell
-											align="right"
-											sx={{ color: valueAddColor(row.value_add), fontWeight: 700 }}
-										>
-											{formatCoins(row.value_add)}
-										</TableCell>
-										<TableCell>
-											<RecommendationChip recommendation={row.recommendation} />
-										</TableCell>
-										<TableCell
-											align="right"
-											sx={{ color: signedValueColor(row.profit), fontWeight: 700 }}
-										>
-											{formatCoins(row.profit)}
-										</TableCell>
-										<TableCell
-											align="right"
-											sx={{ color: roiColor(row.roi), fontWeight: roiFontWeight(row.roi) }}
-										>
-											{formatPercent(row.roi)}
-										</TableCell>
-										<TableCell align="right">{formatNumber(row.buy_quantity)}</TableCell>
-										<TableCell align="right">{formatNumber(row.sell_quantity)}</TableCell>
-									</TableRow>
-								))}
+												{depth ? formatCoins(depth.instant_sell_depth_profit) : "-"}
+											</TableCell>
+											<TableCell>{row.disciplines.join(", ")}</TableCell>
+											<TableCell align="right">{formatCoins(row.craft_cost)}</TableCell>
+											<TableCell align="right">{formatCoins(row.sell_price)}</TableCell>
+											<TableCell align="right">{formatCoins(row.net_sale)}</TableCell>
+											<TableCell align="right">{formatCoins(row.ingredient_sale_value)}</TableCell>
+											<TableCell align="right">{formatCoins(row.crafted_item_value)}</TableCell>
+											<TableCell
+												align="right"
+												sx={{ color: valueAddColor(row.value_add), fontWeight: 700 }}
+											>
+												{formatCoins(row.value_add)}
+											</TableCell>
+											<TableCell>
+												<RecommendationChip recommendation={row.recommendation} />
+											</TableCell>
+											<TableCell
+												align="right"
+												sx={{ color: signedValueColor(row.profit), fontWeight: 700 }}
+											>
+												{formatCoins(row.profit)}
+											</TableCell>
+											<TableCell
+												align="right"
+												sx={{ color: roiColor(row.roi), fontWeight: roiFontWeight(row.roi) }}
+											>
+												{formatPercent(row.roi)}
+											</TableCell>
+											<TableCell align="right">{formatNumber(row.buy_quantity)}</TableCell>
+											<TableCell align="right">{formatNumber(row.sell_quantity)}</TableCell>
+										</TableRow>
+									)
+								})}
 							</TableBody>
 						</Table>
 					</TableContainer>
