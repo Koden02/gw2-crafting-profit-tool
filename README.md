@@ -5,13 +5,13 @@
 ![React](https://img.shields.io/badge/React-frontend-blue)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 ![Status](https://img.shields.io/badge/status-early%20development-orange)
-![Version](https://img.shields.io/badge/version-0.1.8-blue)
+![Version](https://img.shields.io/badge/version-0.1.9-blue)
 
 GW2 Craft Profit Tool is a local full-stack app for analyzing Guild Wars 2 crafting profitability using the official Guild Wars 2 API, SQLite, recursive recipe costing, and Trading Post prices.
 
-Project status: Early Development v0.1.8.
+Project status: Early Development v0.1.9.
 
-The v0.1.8 release is focused on local data sync, craft profitability analysis, pricing assumptions, Trading Post depth visibility, table-level risk signals, owned-material adjusted batch planning, saved filters, watchlists, and a usable frontend for browsing profitable crafts. Full inventory-aware table ranking, historical pricing, and packaging are planned future work.
+The v0.1.9 release is focused on local data sync, craft profitability analysis, pricing assumptions, Trading Post depth visibility, table-level risk signals, owned-material adjusted batch planning, saved filters, watchlists, endpoint smoke coverage, and a usable frontend for browsing profitable crafts. Full inventory-aware table ranking, historical pricing, and packaging are planned future work.
 
 ## Implemented Features
 
@@ -56,6 +56,7 @@ The v0.1.8 release is focused on local data sync, craft profitability analysis, 
   - recommendation chips
   - item detail drawer
   - ingredient breakdown
+- Endpoint smoke tests for the main read-only API surface.
 
 ## Tech Stack
 
@@ -158,7 +159,15 @@ Vite may choose a later port if 5173 is already in use.
 
 The app caches Guild Wars 2 API data in `data/gw2_profit.sqlite`.
 
-Recommended first sync order:
+Recommended first sync order from the frontend:
+
+1. Start the backend and frontend.
+2. Open the frontend URL.
+3. Use the Data Sync panel to run `Sync Items`, then `Sync Recipes`, then `Sync Prices`.
+
+Items and recipes are the slower first-run datasets. Prices are the normal refresh before checking profitability.
+
+The same sync actions are available as API calls:
 
 ```powershell
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/sync/items
@@ -166,13 +175,13 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/sync/recipes
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/sync/prices
 ```
 
-After the first full sync, prices are the main dataset to refresh:
+After the first full sync, prices are the main dataset to refresh from the UI or API:
 
 ```powershell
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/sync/prices
 ```
 
-Check local cache status:
+Check local cache status from the UI status area or API:
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8000/api/sync/status
@@ -234,7 +243,7 @@ npm run lint
 
 ## Current Limitations
 
-Not implemented in v0.1.8:
+Not implemented in v0.1.9:
 
 - Full inventory-aware table ranking.
 - Historical price charts.

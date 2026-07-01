@@ -6,7 +6,7 @@ from app.models.commerce_price import CommercePrice
 from app.models.item import Item
 from app.models.recipe import Recipe
 
-router = APIRouter(prefix="/api/debug", tags=["debug"])
+router = APIRouter(prefix="/api/debug", tags=["debug"], include_in_schema=False)
 
 
 @router.get("/items/{item_id}")

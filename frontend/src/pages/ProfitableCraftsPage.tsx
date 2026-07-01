@@ -1014,6 +1014,30 @@ export default function ProfitableCraftsPage() {
 		return copied
 	}, [filteredRows, sortDirection, sortKey])
 
+	const emptyResultMessage = useMemo(() => {
+		if (loading || error || sortedRows.length > 0) {
+			return null
+		}
+
+		if (rows.length === 0) {
+			return "No profitable crafts are loaded yet. Use Data Sync to load items, recipes, and prices, then reload the table."
+		}
+
+		if (watchlistOnly && watchlistIds.length === 0) {
+			return "Your watchlist is empty. Turn off Watchlist Only or add crafts with the Watch button."
+		}
+
+		if (watchlistOnly) {
+			return "None of your watched crafts match the current filters."
+		}
+
+		if (itemNameSearch.trim()) {
+			return "No loaded crafts match the current name search and filters."
+		}
+
+		return "No loaded crafts match the current filters."
+	}, [error, itemNameSearch, loading, rows.length, sortedRows.length, watchlistIds.length, watchlistOnly])
+
 	async function handleLoadTableDepth() {
 		const rowsToLoad = sortedRows
 			.filter((row) => {
@@ -1657,6 +1681,8 @@ export default function ProfitableCraftsPage() {
 
 				{error && <Alert severity="error">{error}</Alert>}
 
+				{emptyResultMessage && <Alert severity="info">{emptyResultMessage}</Alert>}
+
 				{!loading && !error && summaryHighlights.length > 0 && (
 					<Box
 						sx={{
@@ -1774,7 +1800,7 @@ export default function ProfitableCraftsPage() {
 					</Paper>
 				)}
 
-				{!loading && !error && (
+				{!loading && !error && sortedRows.length > 0 && (
 					<TableContainer
 						component={Paper}
 						elevation={2}
