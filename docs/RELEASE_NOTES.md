@@ -1,5 +1,12 @@
 # Release Notes
 
+## v0.1.12
+
+- Moved automatic price-history settings out of the crafts page and into a dedicated Options page.
+- Moved tracked item review and ignore/restore controls into a dedicated Tracked Items page.
+- Added top-level navigation between Crafts, Options, and Tracked Items.
+- Added hover explanations to automatic price-history metric boxes and settings inputs.
+
 ## v0.1.11
 
 Stabilization checkpoint before `0.2.0`.

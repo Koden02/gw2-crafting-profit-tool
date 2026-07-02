@@ -25,36 +25,21 @@ import {
 
 import {
 	fetchAccountHoldingsStatus,
-	fetchAutoPriceSyncStatus,
 	fetchListingDepth,
-	fetchPriceHistoryConfig,
-	fetchPriceHistoryEstimate,
-	fetchPriceHistoryRelevance,
 	fetchProfitDetail,
 	fetchProfitScenarios,
 	fetchProfitableCrafts,
 	fetchSyncStatus,
-	ignorePriceHistoryItem,
-	pauseAutoPriceSync,
-	restorePriceHistoryItem,
-	resumeAutoPriceSync,
 	syncAccountHoldings,
 	syncCommercePrices,
 	syncItems,
 	syncRecipes,
-	updatePriceHistoryConfig,
 	type AccountHoldingsStatus,
-	type AutoPriceSyncStatus,
 	type ListingDepthAnalysis,
 	type MaterialPricingMode,
 	type OutputPricingMode,
-	type PriceHistoryConfig,
-	type PriceHistoryEstimate,
-	type PriceHistoryRelevanceFilter,
-	type PriceHistoryRelevanceItem,
 	type ProfitScenario,
 	type ProfitableCraft,
-	type SnapshotItemMode,
 	type SyncStatus,
 } from "../api/profitableCrafts"
 import { formatCoins, formatDateTime, formatNumber, formatPercent } from "../utils/formatting"
@@ -390,17 +375,6 @@ export default function ProfitableCraftsPage() {
 	const [syncInProgress, setSyncInProgress] = useState<SyncDataset | null>(null)
 	const [syncError, setSyncError] = useState<string | null>(null)
 	const [syncMessage, setSyncMessage] = useState<string | null>(null)
-	const [autoPriceSyncStatus, setAutoPriceSyncStatus] = useState<AutoPriceSyncStatus | null>(null)
-	const [priceHistoryConfig, setPriceHistoryConfig] = useState<PriceHistoryConfig | null>(null)
-	const [priceHistoryEstimate, setPriceHistoryEstimate] = useState<PriceHistoryEstimate | null>(null)
-	const [priceHistoryItems, setPriceHistoryItems] = useState<PriceHistoryRelevanceItem[]>([])
-	const [priceHistoryTotal, setPriceHistoryTotal] = useState(0)
-	const [priceHistorySearch, setPriceHistorySearch] = useState("")
-	const [priceHistoryFilter, setPriceHistoryFilter] = useState<PriceHistoryRelevanceFilter>("relevant")
-	const [priceHistoryLoading, setPriceHistoryLoading] = useState(false)
-	const [priceHistorySaving, setPriceHistorySaving] = useState(false)
-	const [priceHistoryError, setPriceHistoryError] = useState<string | null>(null)
-	const [priceHistoryMessage, setPriceHistoryMessage] = useState<string | null>(null)
 	const [accountApiKey, setAccountApiKey] = useState(loadSavedAccountApiKey)
 	const [accountKeySaved, setAccountKeySaved] = useState(() => loadSavedAccountApiKey().trim().length > 0)
 	const [accountSyncing, setAccountSyncing] = useState(false)
@@ -460,53 +434,6 @@ export default function ProfitableCraftsPage() {
 			watchlistOnly,
 		}
 	}
-
-	const loadPriceHistoryStatus = useCallback(async () => {
-		const [autoStatus, config, estimate] = await Promise.all([
-			fetchAutoPriceSyncStatus(),
-			fetchPriceHistoryConfig(),
-			fetchPriceHistoryEstimate(),
-		])
-
-		setAutoPriceSyncStatus(autoStatus)
-		setPriceHistoryConfig(config)
-		setPriceHistoryEstimate(estimate)
-	}, [])
-
-	const loadPriceHistoryRelevance = useCallback(async () => {
-		try {
-			setPriceHistoryLoading(true)
-			setPriceHistoryError(null)
-
-			const relevance = await fetchPriceHistoryRelevance({
-				search: priceHistorySearch,
-				filter: priceHistoryFilter,
-				limit: 50,
-			})
-
-			setPriceHistoryItems(relevance.items)
-			setPriceHistoryTotal(relevance.total)
-		} catch (err) {
-			if (err instanceof Error) {
-				setPriceHistoryError(err.message)
-			} else {
-				setPriceHistoryError("Unknown error occurred while loading price history controls.")
-			}
-		} finally {
-			setPriceHistoryLoading(false)
-		}
-	}, [priceHistoryFilter, priceHistorySearch])
-
-	const refreshPriceHistoryControls = useCallback(async () => {
-		await Promise.all([
-			loadPriceHistoryStatus().catch((err) => {
-				if (err instanceof Error) {
-					setPriceHistoryError(err.message)
-				}
-			}),
-			loadPriceHistoryRelevance(),
-		])
-	}, [loadPriceHistoryRelevance, loadPriceHistoryStatus])
 
 	const loadData = useCallback(async () => {
 		try {
@@ -633,7 +560,6 @@ export default function ProfitableCraftsPage() {
 			}
 
 			await loadData()
-			await refreshPriceHistoryControls()
 		} catch (err) {
 			if (err instanceof Error) {
 				setSyncError(err.message)
@@ -642,97 +568,6 @@ export default function ProfitableCraftsPage() {
 			}
 		} finally {
 			setSyncInProgress(null)
-		}
-	}
-
-	async function handleToggleAutoPriceSync() {
-		try {
-			setPriceHistorySaving(true)
-			setPriceHistoryError(null)
-			setPriceHistoryMessage(null)
-
-			const nextStatus = autoPriceSyncStatus?.enabled
-				? await pauseAutoPriceSync()
-				: await resumeAutoPriceSync()
-
-			setAutoPriceSyncStatus(nextStatus)
-			await loadPriceHistoryStatus()
-			setPriceHistoryMessage(nextStatus.enabled ? "Automatic price sync resumed." : "Automatic price sync paused.")
-		} catch (err) {
-			if (err instanceof Error) {
-				setPriceHistoryError(err.message)
-			} else {
-				setPriceHistoryError("Unknown error occurred while updating automatic price sync.")
-			}
-		} finally {
-			setPriceHistorySaving(false)
-		}
-	}
-
-	async function handleSavePriceHistoryConfig() {
-		if (priceHistoryConfig === null) {
-			return
-		}
-
-		try {
-			setPriceHistorySaving(true)
-			setPriceHistoryError(null)
-			setPriceHistoryMessage(null)
-
-			const savedConfig = await updatePriceHistoryConfig(priceHistoryConfig)
-			setPriceHistoryConfig(savedConfig)
-			await refreshPriceHistoryControls()
-			setPriceHistoryMessage("Saved price history settings.")
-		} catch (err) {
-			if (err instanceof Error) {
-				setPriceHistoryError(err.message)
-			} else {
-				setPriceHistoryError("Unknown error occurred while saving price history settings.")
-			}
-		} finally {
-			setPriceHistorySaving(false)
-		}
-	}
-
-	function handlePriceHistoryNumberSetting(
-		key:
-			| "price_sync_interval_minutes"
-			| "raw_snapshot_retention_days"
-			| "hourly_rollup_retention_days"
-			| "daily_rollup_retention_days"
-			| "max_history_mb",
-		value: number,
-	) {
-		setPriceHistoryConfig((current) => current === null ? current : { ...current, [key]: value })
-	}
-
-	function handlePriceHistoryModeSetting(value: SnapshotItemMode) {
-		setPriceHistoryConfig((current) => current === null ? current : { ...current, snapshot_item_mode: value })
-	}
-
-	async function handleTogglePriceHistoryIgnore(item: PriceHistoryRelevanceItem) {
-		try {
-			setPriceHistorySaving(true)
-			setPriceHistoryError(null)
-			setPriceHistoryMessage(null)
-
-			if (item.is_ignored) {
-				await restorePriceHistoryItem(item.item_id)
-				setPriceHistoryMessage(`Restored ${item.name} to price history tracking.`)
-			} else {
-				await ignorePriceHistoryItem(item.item_id)
-				setPriceHistoryMessage(`Ignored ${item.name} for future price history snapshots.`)
-			}
-
-			await refreshPriceHistoryControls()
-		} catch (err) {
-			if (err instanceof Error) {
-				setPriceHistoryError(err.message)
-			} else {
-				setPriceHistoryError("Unknown error occurred while updating ignored items.")
-			}
-		} finally {
-			setPriceHistorySaving(false)
 		}
 	}
 
@@ -1052,18 +887,6 @@ export default function ProfitableCraftsPage() {
 		}
 
 		return "Syncing Recipes"
-	}
-
-	function formatStorageMegabytes(value: number | null | undefined): string {
-		if (value === null || value === undefined) {
-			return "-"
-		}
-
-		if (value >= 1024) {
-			return `${(value / 1024).toFixed(2)} GB`
-		}
-
-		return `${value.toFixed(1)} MB`
 	}
 
 	function SyncButton({ dataset, label }: { dataset: SyncDataset; label: string }) {
@@ -1415,16 +1238,7 @@ export default function ProfitableCraftsPage() {
 
 		hasLoadedInitialData.current = true
 		void loadData()
-		void refreshPriceHistoryControls()
-	}, [loadData, refreshPriceHistoryControls])
-
-	useEffect(() => {
-		if (!hasLoadedInitialData.current) {
-			return
-		}
-
-		void loadPriceHistoryRelevance()
-	}, [loadPriceHistoryRelevance])
+	}, [loadData])
 
 	return (
 		<Box
@@ -1500,341 +1314,6 @@ export default function ProfitableCraftsPage() {
 									{formatNumber(syncStatus.price_count)} prices
 								</Typography>
 							)}
-						</Stack>
-
-						<Divider />
-
-						<Stack spacing={1.5}>
-							<Stack
-								direction={{ xs: "column", md: "row" }}
-								justifyContent="space-between"
-								spacing={1.5}
-							>
-								<Box>
-									<Typography
-										variant="subtitle2"
-										sx={{ color: "#5a3d1f", fontWeight: 800, textTransform: "uppercase" }}
-									>
-										Automatic Price History
-									</Typography>
-									<Typography variant="body2" color="text.secondary">
-										Server-side Trading Post price refresh with local snapshots, rollups, retention, and ignored items.
-									</Typography>
-								</Box>
-
-								<Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ sm: "center" }}>
-									<Chip
-										label={autoPriceSyncStatus?.enabled ? "Auto Sync On" : "Paused"}
-										color={autoPriceSyncStatus?.enabled ? "success" : "default"}
-										size="small"
-										sx={{ fontWeight: 800 }}
-									/>
-									<Chip
-										label={autoPriceSyncStatus?.running ? "Running" : "Idle"}
-										color={autoPriceSyncStatus?.running ? "warning" : "default"}
-										size="small"
-										variant="outlined"
-										sx={{ fontWeight: 800 }}
-									/>
-									<Button
-										variant={autoPriceSyncStatus?.enabled ? "outlined" : "contained"}
-										disabled={priceHistorySaving}
-										onClick={() => void handleToggleAutoPriceSync()}
-										sx={{
-											bgcolor: autoPriceSyncStatus?.enabled ? "transparent" : accentColor,
-											borderColor: accentColor,
-											color: autoPriceSyncStatus?.enabled ? accentColor : "#fff",
-											minHeight: 36,
-											"&:hover": {
-												borderColor: "#8d5e25",
-												bgcolor: autoPriceSyncStatus?.enabled ? "rgba(165, 111, 44, 0.08)" : "#8d5e25",
-											},
-										}}
-									>
-										{autoPriceSyncStatus?.enabled ? "Pause Auto Sync" : "Resume Auto Sync"}
-									</Button>
-									<Button
-										variant="outlined"
-										disabled={priceHistorySaving || priceHistoryLoading}
-										onClick={() => void refreshPriceHistoryControls()}
-										sx={{
-											borderColor: accentColor,
-											color: accentColor,
-											minHeight: 36,
-											"&:hover": {
-												borderColor: "#8d5e25",
-												bgcolor: "rgba(165, 111, 44, 0.08)",
-											},
-										}}
-									>
-										Refresh Status
-									</Button>
-								</Stack>
-							</Stack>
-
-							<Stack
-								direction={{ xs: "column", sm: "row" }}
-								spacing={1}
-								sx={{ color: "text.secondary" }}
-							>
-								<Typography variant="caption">
-									Last auto price sync: {formatDateTime(autoPriceSyncStatus?.last_price_sync_at)}
-								</Typography>
-								<Typography variant="caption">
-									Last snapshot: {formatDateTime(autoPriceSyncStatus?.last_snapshot_at)}
-								</Typography>
-								<Typography variant="caption">
-									Next eligible sync: {formatDateTime(autoPriceSyncStatus?.next_due_at)}
-								</Typography>
-							</Stack>
-
-							{autoPriceSyncStatus?.last_error && (
-								<Alert severity="error">{autoPriceSyncStatus.last_error}</Alert>
-							)}
-
-							{priceHistoryError && <Alert severity="error">{priceHistoryError}</Alert>}
-
-							{priceHistoryMessage && <Alert severity="success">{priceHistoryMessage}</Alert>}
-
-							{priceHistoryEstimate && (
-								<Box
-									sx={{
-										display: "grid",
-										gap: 1.25,
-										gridTemplateColumns: {
-											xs: "1fr",
-											sm: "repeat(2, minmax(0, 1fr))",
-											lg: "repeat(6, minmax(0, 1fr))",
-										},
-									}}
-								>
-									<Box sx={compactMetricSx}>
-										<Typography variant="caption" color="text.secondary">Tracked Items</Typography>
-										<Typography sx={{ fontWeight: 750 }}>
-											{formatNumber(priceHistoryEstimate.tracked_item_count)}
-										</Typography>
-									</Box>
-									<Box sx={compactMetricSx}>
-										<Typography variant="caption" color="text.secondary">Ignored Items</Typography>
-										<Typography sx={{ fontWeight: 750 }}>
-											{formatNumber(priceHistoryEstimate.ignored_item_count)}
-										</Typography>
-									</Box>
-									<Box sx={compactMetricSx}>
-										<Typography variant="caption" color="text.secondary">Raw Data / Day</Typography>
-										<Typography sx={{ fontWeight: 750 }}>
-											{formatStorageMegabytes(priceHistoryEstimate.estimated_raw_mb_per_day)}
-										</Typography>
-									</Box>
-									<Box sx={compactMetricSx}>
-										<Typography variant="caption" color="text.secondary">Retention Estimate</Typography>
-										<Typography sx={{ fontWeight: 750 }}>
-											{formatStorageMegabytes(priceHistoryEstimate.estimated_total_retention_mb)}
-										</Typography>
-									</Box>
-									<Box sx={compactMetricSx}>
-										<Typography variant="caption" color="text.secondary">Current History</Typography>
-										<Typography sx={{ fontWeight: 750 }}>
-											{formatStorageMegabytes(priceHistoryEstimate.current_history_estimated_mb)}
-										</Typography>
-									</Box>
-									<Box sx={compactMetricSx}>
-										<Typography variant="caption" color="text.secondary">Database File</Typography>
-										<Typography sx={{ fontWeight: 750 }}>
-											{formatStorageMegabytes(priceHistoryEstimate.database_file_mb)}
-										</Typography>
-									</Box>
-								</Box>
-							)}
-
-							{priceHistoryConfig && (
-								<Stack direction={{ xs: "column", lg: "row" }} spacing={1.5} flexWrap="wrap" useFlexGap>
-									<TextField
-										label="Sync Interval (min)"
-										type="number"
-										value={priceHistoryConfig.price_sync_interval_minutes}
-										onChange={(e) => handlePriceHistoryNumberSetting("price_sync_interval_minutes", Number(e.target.value))}
-										size="small"
-										sx={{ width: 170 }}
-									/>
-									<TextField
-										label="Raw Retention (days)"
-										type="number"
-										value={priceHistoryConfig.raw_snapshot_retention_days}
-										onChange={(e) => handlePriceHistoryNumberSetting("raw_snapshot_retention_days", Number(e.target.value))}
-										size="small"
-										sx={{ width: 180 }}
-									/>
-									<TextField
-										label="Hourly Rollups (days)"
-										type="number"
-										value={priceHistoryConfig.hourly_rollup_retention_days}
-										onChange={(e) => handlePriceHistoryNumberSetting("hourly_rollup_retention_days", Number(e.target.value))}
-										size="small"
-										sx={{ width: 190 }}
-									/>
-									<TextField
-										label="Daily Rollups (days)"
-										type="number"
-										value={priceHistoryConfig.daily_rollup_retention_days}
-										onChange={(e) => handlePriceHistoryNumberSetting("daily_rollup_retention_days", Number(e.target.value))}
-										size="small"
-										sx={{ width: 185 }}
-									/>
-									<TextField
-										label="Max History (MB)"
-										type="number"
-										value={priceHistoryConfig.max_history_mb}
-										onChange={(e) => handlePriceHistoryNumberSetting("max_history_mb", Number(e.target.value))}
-										size="small"
-										sx={{ width: 170 }}
-									/>
-									<TextField
-										select
-										label="Snapshot Items"
-										value={priceHistoryConfig.snapshot_item_mode}
-										onChange={(e) => handlePriceHistoryModeSetting(e.target.value as SnapshotItemMode)}
-										size="small"
-										sx={{ minWidth: 180 }}
-									>
-										<MenuItem value="relevant">Relevant Only</MenuItem>
-										<MenuItem value="all">All Priced Items</MenuItem>
-									</TextField>
-									<Button
-										variant="contained"
-										disabled={priceHistorySaving}
-										onClick={() => void handleSavePriceHistoryConfig()}
-										sx={{
-											bgcolor: accentColor,
-											minHeight: 40,
-											"&:hover": {
-												bgcolor: "#8d5e25",
-											},
-										}}
-									>
-										Save History Settings
-									</Button>
-								</Stack>
-							)}
-
-							<Divider />
-
-							<Stack spacing={1.25}>
-								<Stack
-									direction={{ xs: "column", md: "row" }}
-									justifyContent="space-between"
-									spacing={1.25}
-								>
-									<Box>
-										<Typography variant="subtitle2" sx={{ color: "#5a3d1f", fontWeight: 800 }}>
-											Tracked Item Review
-										</Typography>
-										<Typography variant="body2" color="text.secondary">
-											Showing {formatNumber(priceHistoryItems.length)} of {formatNumber(priceHistoryTotal)} matching items.
-										</Typography>
-									</Box>
-									<Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-										<TextField
-											label="Search Items"
-											value={priceHistorySearch}
-											onChange={(e) => setPriceHistorySearch(e.target.value)}
-											size="small"
-											sx={{ minWidth: 220 }}
-										/>
-										<TextField
-											select
-											label="Review Filter"
-											value={priceHistoryFilter}
-											onChange={(e) => setPriceHistoryFilter(e.target.value as PriceHistoryRelevanceFilter)}
-											size="small"
-											sx={{ minWidth: 160 }}
-										>
-											<MenuItem value="relevant">Relevant</MenuItem>
-											<MenuItem value="ignored">Ignored</MenuItem>
-											<MenuItem value="untracked">Untracked</MenuItem>
-											<MenuItem value="all">All</MenuItem>
-										</TextField>
-									</Stack>
-								</Stack>
-
-								<TableContainer
-									component={Box}
-									sx={{
-										border: "1px solid rgba(98, 63, 24, 0.14)",
-										borderRadius: 2,
-										maxHeight: 260,
-										overflow: "auto",
-									}}
-								>
-									<Table stickyHeader size="small" sx={{ minWidth: 760 }}>
-										<TableHead>
-											<TableRow>
-												<TableCell sx={tableHeaderCellSx}>Item</TableCell>
-												<TableCell sx={tableHeaderCellSx}>Why</TableCell>
-												<TableCell sx={tableHeaderCellSx}>History Status</TableCell>
-												<TableCell align="right" sx={tableHeaderCellSx}>Action</TableCell>
-											</TableRow>
-										</TableHead>
-										<TableBody>
-											{priceHistoryItems.map((item) => (
-												<TableRow key={item.item_id} hover sx={zebraRowSx}>
-													<TableCell>
-														<Typography variant="body2" sx={{ fontWeight: 700 }}>
-															{item.name}
-														</Typography>
-														<Typography variant="caption" color="text.secondary">
-															{item.item_id}
-														</Typography>
-													</TableCell>
-													<TableCell>{item.reasons.join(", ")}</TableCell>
-													<TableCell>
-														<Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
-															<Chip
-																label={item.is_ignored ? "Ignored" : item.is_tracked ? "Tracked" : "Not Tracked"}
-																color={item.is_ignored ? "default" : item.is_tracked ? "success" : "warning"}
-																size="small"
-																sx={{ fontWeight: 800 }}
-															/>
-															{!item.has_price && (
-																<Chip label="No TP Price" size="small" variant="outlined" />
-															)}
-														</Stack>
-													</TableCell>
-													<TableCell align="right">
-														<Button
-															size="small"
-															variant={item.is_ignored ? "contained" : "outlined"}
-															disabled={priceHistorySaving}
-															onClick={() => void handleTogglePriceHistoryIgnore(item)}
-															sx={{
-																bgcolor: item.is_ignored ? accentColor : "transparent",
-																borderColor: accentColor,
-																color: item.is_ignored ? "#fff" : accentColor,
-																minWidth: 88,
-																"&:hover": {
-																	bgcolor: item.is_ignored ? "#8d5e25" : "rgba(165, 111, 44, 0.08)",
-																	borderColor: "#8d5e25",
-																},
-															}}
-														>
-															{item.is_ignored ? "Restore" : "Ignore"}
-														</Button>
-													</TableCell>
-												</TableRow>
-											))}
-											{priceHistoryItems.length === 0 && (
-												<TableRow>
-													<TableCell colSpan={4}>
-														<Typography variant="body2" color="text.secondary">
-															{priceHistoryLoading ? "Loading tracked item review." : "No items match the current review filter."}
-														</Typography>
-													</TableCell>
-												</TableRow>
-											)}
-										</TableBody>
-									</Table>
-								</TableContainer>
-							</Stack>
 						</Stack>
 
 						<Divider />
