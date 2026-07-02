@@ -146,6 +146,32 @@ export type PriceHistoryRelevanceResponse = {
 	search: string
 }
 
+export type PriceHistoryResolution = "auto" | "raw" | "hour" | "day"
+
+export type PriceHistoryPoint = {
+	observed_at: string
+	buy_price: number | null
+	buy_price_min: number | null
+	buy_price_max: number | null
+	buy_quantity: number | null
+	sell_price: number | null
+	sell_price_min: number | null
+	sell_price_max: number | null
+	sell_quantity: number | null
+	sample_count: number
+}
+
+export type PriceHistoryResponse = {
+	item_id: number
+	name: string
+	resolution: Exclude<PriceHistoryResolution, "auto">
+	range_days: number
+	start_at: string
+	end_at: string
+	point_count: number
+	points: PriceHistoryPoint[]
+}
+
 export type PriceSyncResult = {
 	status: string
 	prices_upserted: number
@@ -278,6 +304,35 @@ export async function fetchListingDepth(
 	if (!response.ok) {
 		const detail = await response.json().catch(() => null)
 		const message = typeof detail?.detail === "string" ? detail.detail : `Failed to fetch listing depth: ${response.status}`
+		throw new Error(message)
+	}
+
+	return response.json()
+}
+
+export async function fetchPriceHistory(
+	itemId: number,
+	options: {
+		range_days?: number
+		resolution?: PriceHistoryResolution
+	} = {},
+): Promise<PriceHistoryResponse> {
+	const params = new URLSearchParams()
+
+	if (options.range_days !== undefined) {
+		params.set("range_days", String(options.range_days))
+	}
+
+	if (options.resolution !== undefined) {
+		params.set("resolution", options.resolution)
+	}
+
+	const suffix = params.toString() ? `?${params.toString()}` : ""
+	const response = await fetch(`${API_BASE_URL}/api/price-history/${itemId}${suffix}`)
+
+	if (!response.ok) {
+		const detail = await response.json().catch(() => null)
+		const message = typeof detail?.detail === "string" ? detail.detail : `Failed to fetch price history: ${response.status}`
 		throw new Error(message)
 	}
 

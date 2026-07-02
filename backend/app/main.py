@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.account import router as account_router
 from app.api.debug import router as debug_router
+from app.api.price_history import router as price_history_router
 from app.api.profitable_crafts import router as profitable_crafts_router
 from app.api.profit import router as profit_router
 from app.api.sync import router as sync_router
@@ -47,3 +48,4 @@ app.include_router(account_router)
 app.include_router(debug_router)
 app.include_router(profit_router)
 app.include_router(profitable_crafts_router)
+app.include_router(price_history_router)

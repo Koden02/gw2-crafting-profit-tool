@@ -26,6 +26,7 @@ import {
 import {
 	fetchAccountHoldingsStatus,
 	fetchListingDepth,
+	fetchPriceHistory,
 	fetchProfitDetail,
 	fetchProfitScenarios,
 	fetchProfitableCrafts,
@@ -38,6 +39,7 @@ import {
 	type ListingDepthAnalysis,
 	type MaterialPricingMode,
 	type OutputPricingMode,
+	type PriceHistoryResponse,
 	type ProfitScenario,
 	type ProfitableCraft,
 	type SyncStatus,
@@ -67,6 +69,7 @@ const accountApiKeyStorageKey = "gw2-profit-api-key"
 const watchlistStorageKey = "gw2-profit-watchlist"
 const filterPresetsStorageKey = "gw2-profit-filter-presets"
 const tableDepthLoadLimit = 25
+const priceHistoryRangeOptions = [1, 7, 30, 90, 365]
 
 type SavedFilterSettings = {
 	limit: number
@@ -364,6 +367,269 @@ type ShoppingPlan = {
 	copyText: string
 }
 
+type PriceHistoryChartPoint = {
+	observedAt: string
+	time: number
+	buyPrice: number | null
+	sellPrice: number | null
+}
+
+function isFiniteNumber(value: number | null | undefined): value is number {
+	return typeof value === "number" && Number.isFinite(value)
+}
+
+function priceHistoryResolutionLabel(resolution: PriceHistoryResponse["resolution"]): string {
+	if (resolution === "raw") {
+		return "Raw snapshots"
+	}
+
+	if (resolution === "hour") {
+		return "Hourly rollup"
+	}
+
+	return "Daily rollup"
+}
+
+function formatChartTimestamp(value: number): string {
+	const date = new Date(value)
+
+	if (Number.isNaN(date.getTime())) {
+		return "-"
+	}
+
+	return date.toLocaleString(undefined, {
+		month: "short",
+		day: "numeric",
+		hour: "numeric",
+	})
+}
+
+function PriceHistoryChart({ history }: { history: PriceHistoryResponse }) {
+	const chartPoints: PriceHistoryChartPoint[] = history.points
+		.map((point) => ({
+			observedAt: point.observed_at,
+			time: new Date(point.observed_at).getTime(),
+			buyPrice: point.buy_price,
+			sellPrice: point.sell_price,
+		}))
+		.filter((point) => Number.isFinite(point.time) && (isFiniteNumber(point.buyPrice) || isFiniteNumber(point.sellPrice)))
+
+	if (chartPoints.length === 0) {
+		return (
+			<Alert severity="info">
+				No local price history has been recorded for this item in the selected range.
+			</Alert>
+		)
+	}
+
+	const priceValues = chartPoints.flatMap((point) => [point.buyPrice, point.sellPrice]).filter(isFiniteNumber)
+	const minPrice = Math.min(...priceValues)
+	const maxPrice = Math.max(...priceValues)
+	const priceSpan = Math.max(1, maxPrice - minPrice)
+	const yMin = Math.max(0, minPrice - priceSpan * 0.08)
+	const yMax = maxPrice + priceSpan * 0.08
+	const xMin = Math.min(...chartPoints.map((point) => point.time))
+	const xMax = Math.max(...chartPoints.map((point) => point.time))
+	const xSpan = Math.max(1, xMax - xMin)
+	const lastPoint = [...chartPoints].reverse().find(
+		(point) => isFiniteNumber(point.buyPrice) || isFiniteNumber(point.sellPrice),
+	)
+	const width = 640
+	const height = 240
+	const padding = {
+		bottom: 42,
+		left: 76,
+		right: 24,
+		top: 24,
+	}
+	const chartWidth = width - padding.left - padding.right
+	const chartHeight = height - padding.top - padding.bottom
+	const gridLines = [0, 0.5, 1].map((ratio) => {
+		const value = yMin + (yMax - yMin) * (1 - ratio)
+		return {
+			ratio,
+			value,
+			y: padding.top + chartHeight * ratio,
+		}
+	})
+
+	function mapX(time: number): number {
+		return padding.left + ((time - xMin) / xSpan) * chartWidth
+	}
+
+	function mapY(price: number): number {
+		return padding.top + ((yMax - price) / Math.max(1, yMax - yMin)) * chartHeight
+	}
+
+	function buildPolyline(key: "buyPrice" | "sellPrice"): string {
+		return chartPoints
+			.flatMap((point) => {
+				const price = point[key]
+
+				if (!isFiniteNumber(price)) {
+					return []
+				}
+
+				return [`${mapX(point.time).toFixed(2)},${mapY(price).toFixed(2)}`]
+			})
+			.join(" ")
+	}
+
+	const buyPolyline = buildPolyline("buyPrice")
+	const sellPolyline = buildPolyline("sellPrice")
+
+	return (
+		<Stack spacing={1.25}>
+			<Box
+				sx={{
+					display: "grid",
+					gap: 1.25,
+					gridTemplateColumns: {
+						xs: "1fr",
+						sm: "repeat(2, minmax(0, 1fr))",
+						md: "repeat(4, minmax(0, 1fr))",
+					},
+				}}
+			>
+				<Box sx={compactMetricSx}>
+					<Typography variant="caption" color="text.secondary">Resolution</Typography>
+					<Typography sx={{ fontWeight: 750 }}>{priceHistoryResolutionLabel(history.resolution)}</Typography>
+				</Box>
+				<Box sx={compactMetricSx}>
+					<Typography variant="caption" color="text.secondary">Samples</Typography>
+					<Typography sx={{ fontWeight: 750 }}>{formatNumber(history.point_count)}</Typography>
+				</Box>
+				<Box sx={compactMetricSx}>
+					<Typography variant="caption" color="text.secondary">Latest Buy</Typography>
+					<Typography sx={{ color: "#1565c0", fontWeight: 750 }}>
+						{formatCoins(lastPoint?.buyPrice)}
+					</Typography>
+				</Box>
+				<Box sx={compactMetricSx}>
+					<Typography variant="caption" color="text.secondary">Latest Sell</Typography>
+					<Typography sx={{ color: "#2e7d32", fontWeight: 750 }}>
+						{formatCoins(lastPoint?.sellPrice)}
+					</Typography>
+				</Box>
+			</Box>
+
+			<Paper
+				variant="outlined"
+				sx={{
+					bgcolor: "rgba(255, 255, 255, 0.78)",
+					borderColor: "rgba(98, 63, 24, 0.14)",
+					p: 1.5,
+				}}
+			>
+				<Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mb: 1 }}>
+					<Stack direction="row" spacing={0.75} alignItems="center">
+						<Box sx={{ bgcolor: "#1565c0", borderRadius: "999px", height: 8, width: 22 }} />
+						<Typography variant="caption" color="text.secondary">Buy orders</Typography>
+					</Stack>
+					<Stack direction="row" spacing={0.75} alignItems="center">
+						<Box sx={{ bgcolor: "#2e7d32", borderRadius: "999px", height: 8, width: 22 }} />
+						<Typography variant="caption" color="text.secondary">Sell listings</Typography>
+					</Stack>
+					<Typography variant="caption" color="text.secondary" sx={{ ml: { sm: "auto" } }}>
+						Latest: {formatDateTime(lastPoint?.observedAt)}
+					</Typography>
+				</Stack>
+
+				<Box sx={{ overflow: "hidden", width: "100%" }}>
+					<svg
+						aria-label={`${history.name} price history`}
+						role="img"
+						viewBox={`0 0 ${width} ${height}`}
+						style={{ display: "block", height: "auto", width: "100%" }}
+					>
+						<rect x="0" y="0" width={width} height={height} fill="#fffdf8" rx="6" />
+						{gridLines.map((line) => (
+							<g key={line.ratio}>
+								<line
+									x1={padding.left}
+									x2={width - padding.right}
+									y1={line.y}
+									y2={line.y}
+									stroke="rgba(98, 63, 24, 0.14)"
+									strokeWidth="1"
+								/>
+								<text
+									x={padding.left - 8}
+									y={line.y + 4}
+									fill="#6a5a47"
+									fontSize="12"
+									textAnchor="end"
+								>
+									{formatCoins(line.value)}
+								</text>
+							</g>
+						))}
+						<line
+							x1={padding.left}
+							x2={padding.left}
+							y1={padding.top}
+							y2={height - padding.bottom}
+							stroke="rgba(98, 63, 24, 0.2)"
+							strokeWidth="1.5"
+						/>
+						<line
+							x1={padding.left}
+							x2={width - padding.right}
+							y1={height - padding.bottom}
+							y2={height - padding.bottom}
+							stroke="rgba(98, 63, 24, 0.2)"
+							strokeWidth="1.5"
+						/>
+						<text
+							x={padding.left}
+							y={height - 14}
+							fill="#6a5a47"
+							fontSize="12"
+							textAnchor="start"
+						>
+							{formatChartTimestamp(xMin)}
+						</text>
+						<text
+							x={width - padding.right}
+							y={height - 14}
+							fill="#6a5a47"
+							fontSize="12"
+							textAnchor="end"
+						>
+							{formatChartTimestamp(xMax)}
+						</text>
+						{buyPolyline && (
+							<polyline points={buyPolyline} fill="none" stroke="#1565c0" strokeWidth="3" strokeLinejoin="round" />
+						)}
+						{sellPolyline && (
+							<polyline points={sellPolyline} fill="none" stroke="#2e7d32" strokeWidth="3" strokeLinejoin="round" />
+						)}
+						{chartPoints.length <= 80 &&
+							chartPoints.map((point) => (
+								<g key={`${point.time}-${point.buyPrice ?? "x"}-${point.sellPrice ?? "x"}`}>
+									{isFiniteNumber(point.buyPrice) && (
+										<circle cx={mapX(point.time)} cy={mapY(point.buyPrice)} r="3.5" fill="#1565c0">
+											<title>
+												{`${formatDateTime(point.observedAt)} buy ${formatCoins(point.buyPrice)}`}
+											</title>
+										</circle>
+									)}
+									{isFiniteNumber(point.sellPrice) && (
+										<circle cx={mapX(point.time)} cy={mapY(point.sellPrice)} r="3.5" fill="#2e7d32">
+											<title>
+												{`${formatDateTime(point.observedAt)} sell ${formatCoins(point.sellPrice)}`}
+											</title>
+										</circle>
+									)}
+								</g>
+							))}
+					</svg>
+				</Box>
+			</Paper>
+		</Stack>
+	)
+}
+
 export default function ProfitableCraftsPage() {
 	const [rows, setRows] = useState<ProfitableCraft[]>([])
 	const [loading, setLoading] = useState(false)
@@ -391,6 +657,10 @@ export default function ProfitableCraftsPage() {
 	const [scenarioRows, setScenarioRows] = useState<ProfitScenario[]>([])
 	const [listingDepth, setListingDepth] = useState<ListingDepthAnalysis | null>(null)
 	const [listingDepthError, setListingDepthError] = useState<string | null>(null)
+	const [priceHistory, setPriceHistory] = useState<PriceHistoryResponse | null>(null)
+	const [priceHistoryError, setPriceHistoryError] = useState<string | null>(null)
+	const [priceHistoryLoading, setPriceHistoryLoading] = useState(false)
+	const [priceHistoryRangeDays, setPriceHistoryRangeDays] = useState(7)
 	const [tableDepthByKey, setTableDepthByKey] = useState<Record<string, ListingDepthAnalysis>>({})
 	const [tableDepthErrorsByKey, setTableDepthErrorsByKey] = useState<Record<string, string>>({})
 	const [tableDepthLoading, setTableDepthLoading] = useState(false)
@@ -482,6 +752,26 @@ export default function ProfitableCraftsPage() {
 		outputPricing,
 	])
 
+	async function loadPriceHistoryForItem(
+		itemId: number,
+		rangeDays: number,
+	): Promise<PriceHistoryResponse | null> {
+		try {
+			return await fetchPriceHistory(itemId, {
+				range_days: rangeDays,
+				resolution: "auto",
+			})
+		} catch (err) {
+			if (err instanceof Error) {
+				setPriceHistoryError(err.message)
+			} else {
+				setPriceHistoryError("Unknown error occurred while loading local price history.")
+			}
+
+			return null
+		}
+	}
+
 	async function handleSelectItem(itemId: number) {
 		try {
 			setDetailLoading(true)
@@ -489,8 +779,11 @@ export default function ProfitableCraftsPage() {
 			setScenarioRows([])
 			setListingDepth(null)
 			setListingDepthError(null)
+			setPriceHistory(null)
+			setPriceHistoryError(null)
+			setPriceHistoryLoading(true)
 
-			const [detail, scenarios, depth] = await Promise.all([
+			const [detail, scenarios, depth, history] = await Promise.all([
 				fetchProfitDetail(itemId, {
 					material_pricing: materialPricing,
 					output_pricing: outputPricing,
@@ -507,10 +800,12 @@ export default function ProfitableCraftsPage() {
 
 					return null
 				}),
+				loadPriceHistoryForItem(itemId, priceHistoryRangeDays),
 			])
 			setSelectedItem(detail)
 			setScenarioRows(scenarios)
 			setListingDepth(depth)
+			setPriceHistory(history)
 			setBatchOutputCount(Math.max(1, detail.output_item_count ?? 1))
 			setShoppingListCopyMessage(null)
 		} catch (err) {
@@ -521,7 +816,24 @@ export default function ProfitableCraftsPage() {
 			}
 		} finally {
 			setDetailLoading(false)
+			setPriceHistoryLoading(false)
 		}
+	}
+
+	async function handlePriceHistoryRangeChange(nextRangeDays: number) {
+		setPriceHistoryRangeDays(nextRangeDays)
+
+		if (selectedItem === null) {
+			return
+		}
+
+		setPriceHistory(null)
+		setPriceHistoryError(null)
+		setPriceHistoryLoading(true)
+
+		const history = await loadPriceHistoryForItem(selectedItem.item_id, nextRangeDays)
+		setPriceHistory(history)
+		setPriceHistoryLoading(false)
 	}
 
 	function handleSort(nextKey: SortKey) {
@@ -1962,6 +2274,9 @@ export default function ProfitableCraftsPage() {
 					setScenarioRows([])
 					setListingDepth(null)
 					setListingDepthError(null)
+					setPriceHistory(null)
+					setPriceHistoryError(null)
+					setPriceHistoryLoading(false)
 					setDetailError(null)
 				}}
 				PaperProps={{
@@ -2115,6 +2430,56 @@ export default function ProfitableCraftsPage() {
 									<Typography variant="caption" color="text.secondary">Sell Quantity</Typography>
 									<Typography sx={{ fontWeight: 750 }}>{formatNumber(selectedItem.sell_quantity)}</Typography>
 								</Box>
+							</Box>
+
+							<Divider />
+
+							<Box>
+								<Stack
+									direction={{ xs: "column", sm: "row" }}
+									justifyContent="space-between"
+									spacing={1.5}
+									sx={{ mb: 1.5 }}
+								>
+									<Box>
+										<Typography variant="h6" sx={{ color: "#3d2d1c", fontWeight: 800 }}>
+											Price History
+										</Typography>
+										<Typography variant="body2" color="text.secondary">
+											Local snapshots recorded by manual and automatic price sync.
+										</Typography>
+									</Box>
+
+									<TextField
+										label="Range"
+										select
+										size="small"
+										value={priceHistoryRangeDays}
+										onChange={(event) => void handlePriceHistoryRangeChange(Number(event.target.value))}
+										disabled={priceHistoryLoading}
+										sx={{ minWidth: 150 }}
+									>
+										{priceHistoryRangeOptions.map((rangeDays) => (
+											<MenuItem key={rangeDays} value={rangeDays}>
+												{rangeDays === 1 ? "1 day" : `${rangeDays} days`}
+											</MenuItem>
+										))}
+									</TextField>
+								</Stack>
+
+								{priceHistoryError && (
+									<Alert severity="warning" sx={{ mb: 1.5 }}>
+										{priceHistoryError}
+									</Alert>
+								)}
+
+								{priceHistoryLoading && (
+									<Box sx={{ display: "flex", justifyContent: "center", py: 3 }}>
+										<CircularProgress size={24} />
+									</Box>
+								)}
+
+								{!priceHistoryLoading && priceHistory && <PriceHistoryChart history={priceHistory} />}
 							</Box>
 
 							<Divider />

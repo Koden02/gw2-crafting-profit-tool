@@ -5,13 +5,13 @@
 ![React](https://img.shields.io/badge/React-frontend-blue)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 ![Status](https://img.shields.io/badge/status-early%20development-orange)
-![Version](https://img.shields.io/badge/version-0.1.12-blue)
+![Version](https://img.shields.io/badge/version-0.2.0-blue)
 
 GW2 Craft Profit Tool is a local full-stack app for analyzing Guild Wars 2 crafting profitability using the official Guild Wars 2 API, SQLite, recursive recipe costing, and Trading Post prices.
 
-Project status: Early Development v0.1.12.
+Project status: Early Development v0.2.0.
 
-The v0.1.12 release is focused on local data sync, automatic server-side price refresh, configurable local price history snapshots and rollups, dedicated options and tracked-item review pages, sync overlap protection, craft profitability analysis, pricing assumptions, Trading Post depth visibility, table-level risk signals, owned-material adjusted batch planning, saved filters, watchlists, endpoint smoke coverage, and a usable frontend for browsing profitable crafts. Full inventory-aware table ranking, historical price charting, and packaging are planned future work.
+The v0.2.0 release starts the historical price analysis track with per-item price history reads and item drawer charts over locally recorded price snapshots and rollups. The app also includes local data sync, automatic server-side price refresh, configurable snapshot retention, dedicated options and tracked-item review pages, sync overlap protection, craft profitability analysis, Trading Post depth visibility, table-level risk signals, owned-material adjusted batch planning, saved filters, watchlists, endpoint smoke coverage, and a usable frontend for browsing profitable crafts. Full inventory-aware table ranking, trend scoring, and packaging are planned future work.
 
 ## Implemented Features
 
@@ -40,6 +40,7 @@ The v0.1.12 release is focused on local data sync, automatic server-side price r
   - storage estimates based on tracked item count
   - relevant-only or all-priced-item snapshot modes
   - ignored-item controls for excluding unwanted items from future snapshots
+  - read-only per-item price history endpoint
 - Craft vs sell ingredients comparison:
   - `ingredient_sale_value`
   - `crafted_item_value`
@@ -62,6 +63,7 @@ The v0.1.12 release is focused on local data sync, automatic server-side price r
   - batch craft planner with missing-material shopping list
   - out-of-pocket batch profit and owned-material coverage in the planner
   - Trading Post market-depth view in the item detail drawer
+  - local price history chart in the item detail drawer
   - summary cards
   - formatted coin values
   - recommendation chips
@@ -256,11 +258,11 @@ npm run lint
 
 ## Current Limitations
 
-Not implemented in v0.1.12:
+Not implemented in v0.2.0:
 
 - Full inventory-aware table ranking.
-- Historical price charts and trend scoring.
-- Price stability scoring.
+- Trend scoring and price stability scoring.
+- Historical order-book velocity.
 - Docker or packaged desktop distribution.
 
 ## Documentation

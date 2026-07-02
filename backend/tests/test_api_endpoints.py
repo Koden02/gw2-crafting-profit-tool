@@ -372,6 +372,102 @@ def test_price_history_relevance_and_ignore_controls(
 	assert restored_estimate_response.json()["tracked_item_count"] == 3
 
 
+def test_price_history_endpoint_returns_raw_snapshots(
+	client: TestClient,
+	db_session: Session,
+) -> None:
+	seed_simple_recipe(db_session)
+	now = datetime.now(timezone.utc).replace(microsecond=0)
+	db_session.add_all(
+		[
+			CommercePriceSnapshot(
+				item_id=1,
+				observed_at=now - timedelta(hours=2),
+				buy_price=490,
+				buy_quantity=8,
+				sell_price=980,
+				sell_quantity=18,
+			),
+			CommercePriceSnapshot(
+				item_id=1,
+				observed_at=now - timedelta(hours=1),
+				buy_price=510,
+				buy_quantity=12,
+				sell_price=1020,
+				sell_quantity=22,
+			),
+		]
+	)
+	db_session.commit()
+
+	response = client.get(
+		"/api/price-history/1",
+		params={"range_days": 7, "resolution": "raw"},
+	)
+
+	assert response.status_code == 200
+	body = response.json()
+	assert body["item_id"] == 1
+	assert body["name"] == "Test Output"
+	assert body["resolution"] == "raw"
+	assert body["range_days"] == 7
+	assert body["point_count"] == 2
+	assert [point["sell_price"] for point in body["points"]] == [980, 1020]
+	assert body["points"][0]["sample_count"] == 1
+
+
+def test_price_history_endpoint_returns_rollup_points(
+	client: TestClient,
+	db_session: Session,
+) -> None:
+	seed_simple_recipe(db_session)
+	now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+	db_session.add(
+		CommercePriceRollup(
+			item_id=1,
+			bucket_type="hour",
+			bucket_start=now - timedelta(days=3),
+			sample_count=4,
+			buy_price_min=480,
+			buy_price_avg=500.5,
+			buy_price_max=520,
+			sell_price_min=980,
+			sell_price_avg=1000.5,
+			sell_price_max=1040,
+			buy_quantity_avg=9.5,
+			sell_quantity_avg=19.5,
+			created_at=now,
+		)
+	)
+	db_session.commit()
+
+	response = client.get(
+		"/api/price-history/1",
+		params={"range_days": 30, "resolution": "hour"},
+	)
+
+	assert response.status_code == 200
+	body = response.json()
+	assert body["resolution"] == "hour"
+	assert body["point_count"] == 1
+	point = body["points"][0]
+	assert point["sample_count"] == 4
+	assert point["buy_price"] == pytest.approx(500.5)
+	assert point["buy_price_min"] == 480
+	assert point["buy_price_max"] == 520
+	assert point["sell_price"] == pytest.approx(1000.5)
+	assert point["sell_quantity"] == pytest.approx(19.5)
+
+
+def test_price_history_endpoint_returns_not_found_for_unknown_item(
+	client: TestClient,
+) -> None:
+	response = client.get("/api/price-history/999999")
+
+	assert response.status_code == 404
+	assert response.json()["detail"] == "Item not found"
+
+
 def test_price_history_config_persists_across_service_instances(db_session: Session) -> None:
 	service = PriceHistoryService(db_session)
 	service.update_config(

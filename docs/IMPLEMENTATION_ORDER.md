@@ -654,6 +654,18 @@ market volatility
 seasonal behavior
 ```
 
+v0.2.0 completed the first read-only history slice:
+
+* per-item price history API
+* automatic raw, hourly, or daily resolution selection
+* item detail drawer chart for local buy and sell price history
+
+Remaining work:
+
+* trend scoring
+* price stability scoring
+* historical order-book velocity
+
 ---
 
 ## Advanced Crafting Tools
