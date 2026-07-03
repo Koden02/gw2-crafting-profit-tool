@@ -371,7 +371,11 @@ type PriceHistoryChartPoint = {
 	observedAt: string
 	time: number
 	buyPrice: number | null
+	buyMin: number | null
+	buyMax: number | null
 	sellPrice: number | null
+	sellMin: number | null
+	sellMax: number | null
 }
 
 function isFiniteNumber(value: number | null | undefined): value is number {
@@ -404,25 +408,67 @@ function formatChartTimestamp(value: number): string {
 	})
 }
 
-function PriceHistoryChart({ history }: { history: PriceHistoryResponse }) {
+function PriceHistoryChart({
+	history,
+	onSyncPrices,
+	syncingPrices,
+	syncDisabled,
+}: {
+	history: PriceHistoryResponse
+	onSyncPrices: () => void
+	syncingPrices: boolean
+	syncDisabled: boolean
+}) {
 	const chartPoints: PriceHistoryChartPoint[] = history.points
 		.map((point) => ({
 			observedAt: point.observed_at,
 			time: new Date(point.observed_at).getTime(),
 			buyPrice: point.buy_price,
+			buyMin: point.buy_price_min,
+			buyMax: point.buy_price_max,
 			sellPrice: point.sell_price,
+			sellMin: point.sell_price_min,
+			sellMax: point.sell_price_max,
 		}))
 		.filter((point) => Number.isFinite(point.time) && (isFiniteNumber(point.buyPrice) || isFiniteNumber(point.sellPrice)))
 
 	if (chartPoints.length === 0) {
 		return (
-			<Alert severity="info">
+			<Alert
+				severity="info"
+				action={
+					<Button
+						color="inherit"
+						disabled={syncDisabled}
+						onClick={onSyncPrices}
+						size="small"
+					>
+						{syncingPrices ? (
+							<Stack direction="row" spacing={0.75} alignItems="center">
+								<CircularProgress color="inherit" size={14} />
+								<span>Syncing</span>
+							</Stack>
+						) : (
+							"Sync Prices"
+						)}
+					</Button>
+				}
+			>
 				No local price history has been recorded for this item in the selected range.
 			</Alert>
 		)
 	}
 
-	const priceValues = chartPoints.flatMap((point) => [point.buyPrice, point.sellPrice]).filter(isFiniteNumber)
+	const priceValues = chartPoints
+		.flatMap((point) => [
+			point.buyPrice,
+			point.buyMin,
+			point.buyMax,
+			point.sellPrice,
+			point.sellMin,
+			point.sellMax,
+		])
+		.filter(isFiniteNumber)
 	const minPrice = Math.min(...priceValues)
 	const maxPrice = Math.max(...priceValues)
 	const priceSpan = Math.max(1, maxPrice - minPrice)
@@ -473,6 +519,38 @@ function PriceHistoryChart({ history }: { history: PriceHistoryResponse }) {
 				return [`${mapX(point.time).toFixed(2)},${mapY(price).toFixed(2)}`]
 			})
 			.join(" ")
+	}
+
+	function renderRangeMarkers({
+		maxKey,
+		minKey,
+		stroke,
+	}: {
+		maxKey: "buyMax" | "sellMax"
+		minKey: "buyMin" | "sellMin"
+		stroke: string
+	}) {
+		return chartPoints.map((point) => {
+			const minPrice = point[minKey]
+			const maxPrice = point[maxKey]
+
+			if (!isFiniteNumber(minPrice) || !isFiniteNumber(maxPrice) || minPrice === maxPrice) {
+				return null
+			}
+
+			return (
+				<line
+					key={`${point.time}-${minKey}-${maxKey}`}
+					x1={mapX(point.time)}
+					x2={mapX(point.time)}
+					y1={mapY(maxPrice)}
+					y2={mapY(minPrice)}
+					stroke={stroke}
+					strokeLinecap="round"
+					strokeWidth="5"
+				/>
+			)
+		})
 	}
 
 	const buyPolyline = buildPolyline("buyPrice")
@@ -530,6 +608,9 @@ function PriceHistoryChart({ history }: { history: PriceHistoryResponse }) {
 						<Box sx={{ bgcolor: "#2e7d32", borderRadius: "999px", height: 8, width: 22 }} />
 						<Typography variant="caption" color="text.secondary">Sell listings</Typography>
 					</Stack>
+					<Typography variant="caption" color="text.secondary">
+						Rollup ranges show min/max when available.
+					</Typography>
 					<Typography variant="caption" color="text.secondary" sx={{ ml: { sm: "auto" } }}>
 						Latest: {formatDateTime(lastPoint?.observedAt)}
 					</Typography>
@@ -598,6 +679,8 @@ function PriceHistoryChart({ history }: { history: PriceHistoryResponse }) {
 						>
 							{formatChartTimestamp(xMax)}
 						</text>
+						{renderRangeMarkers({ minKey: "buyMin", maxKey: "buyMax", stroke: "rgba(21, 101, 192, 0.18)" })}
+						{renderRangeMarkers({ minKey: "sellMin", maxKey: "sellMax", stroke: "rgba(46, 125, 50, 0.18)" })}
 						{buyPolyline && (
 							<polyline points={buyPolyline} fill="none" stroke="#1565c0" strokeWidth="3" strokeLinejoin="round" />
 						)}
@@ -847,6 +930,8 @@ export default function ProfitableCraftsPage() {
 	}
 
 	async function handleDataSync(dataset: SyncDataset) {
+		const selectedItemId = selectedItem?.item_id
+
 		try {
 			setSyncInProgress(dataset)
 			setSyncError(null)
@@ -872,6 +957,19 @@ export default function ProfitableCraftsPage() {
 			}
 
 			await loadData()
+
+			if (dataset === "prices" && selectedItemId !== undefined) {
+				try {
+					setPriceHistory(null)
+					setPriceHistoryError(null)
+					setPriceHistoryLoading(true)
+
+					const history = await loadPriceHistoryForItem(selectedItemId, priceHistoryRangeDays)
+					setPriceHistory(history)
+				} finally {
+					setPriceHistoryLoading(false)
+				}
+			}
 		} catch (err) {
 			if (err instanceof Error) {
 				setSyncError(err.message)
@@ -1177,6 +1275,23 @@ export default function ProfitableCraftsPage() {
 				size="small"
 				variant={recommendation === "Break Even" ? "outlined" : "filled"}
 				sx={{ fontWeight: 800 }}
+			/>
+		)
+	}
+
+	function HistoryAvailabilityChip({ hasHistory }: { hasHistory: boolean }) {
+		return (
+			<Chip
+				label={hasHistory ? "Recorded" : "No data"}
+				color={hasHistory ? "success" : "default"}
+				size="small"
+				title={
+					hasHistory
+						? "This item has local price history snapshots or rollups."
+						: "No local price history is stored for this item yet."
+				}
+				variant={hasHistory ? "filled" : "outlined"}
+				sx={{ fontWeight: 700 }}
 			/>
 		)
 	}
@@ -2127,11 +2242,12 @@ export default function ProfitableCraftsPage() {
 							maxHeight: "calc(100vh - 360px)",
 						}}
 					>
-						<Table stickyHeader size="small" sx={{ minWidth: 1900 }}>
+						<Table stickyHeader size="small" sx={{ minWidth: 2000 }}>
 							<TableHead>
 								<TableRow>
 									<SortableHeader label="Name" sortKey="name" sx={stickyNameHeaderSx} />
 									<TableCell sx={tableHeaderCellSx}>Watch</TableCell>
+									<TableCell sx={tableHeaderCellSx}>History</TableCell>
 									<TableCell sx={tableHeaderCellSx}>Risk</TableCell>
 									<TableCell sx={tableHeaderCellSx}>Pressure</TableCell>
 									<TableCell align="right" sx={tableHeaderCellSx}>Instant Limit</TableCell>
@@ -2194,6 +2310,9 @@ export default function ProfitableCraftsPage() {
 												>
 													{watchlistIdSet.has(row.item_id) ? "Watching" : "Watch"}
 												</Button>
+											</TableCell>
+											<TableCell>
+												<HistoryAvailabilityChip hasHistory={row.has_price_history} />
 											</TableCell>
 											<TableCell>
 												<RiskChips depth={depth} row={row} />
@@ -2479,7 +2598,14 @@ export default function ProfitableCraftsPage() {
 									</Box>
 								)}
 
-								{!priceHistoryLoading && priceHistory && <PriceHistoryChart history={priceHistory} />}
+								{!priceHistoryLoading && priceHistory && (
+									<PriceHistoryChart
+										history={priceHistory}
+										onSyncPrices={() => void handleDataSync("prices")}
+										syncDisabled={loading || accountSyncing || syncInProgress !== null}
+										syncingPrices={syncInProgress === "prices"}
+									/>
+								)}
 							</Box>
 
 							<Divider />

@@ -41,6 +41,7 @@ The v0.2.0 release starts the historical price analysis track with per-item pric
   - relevant-only or all-priced-item snapshot modes
   - ignored-item controls for excluding unwanted items from future snapshots
   - read-only per-item price history endpoint
+  - table indicators for items with recorded local history
 - Craft vs sell ingredients comparison:
   - `ingredient_sale_value`
   - `crafted_item_value`
@@ -64,6 +65,7 @@ The v0.2.0 release starts the historical price analysis track with per-item pric
   - out-of-pocket batch profit and owned-material coverage in the planner
   - Trading Post market-depth view in the item detail drawer
   - local price history chart in the item detail drawer
+  - empty-history sync action and rollup min/max range markers
   - summary cards
   - formatted coin values
   - recommendation chips

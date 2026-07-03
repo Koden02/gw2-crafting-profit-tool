@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.models.account_holding import AccountHolding
 from app.models.commerce_price import CommercePrice
 from app.models.item import Item
+from app.models.price_history import CommercePriceRollup, CommercePriceSnapshot
 from app.models.recipe import Recipe
 
 
@@ -31,6 +32,16 @@ class ProfitEngine:
 			holding.item_id: holding
 			for holding in self.db.query(AccountHolding).all()
 		}
+
+		snapshot_history_item_ids = {
+			item_id
+			for item_id, in self.db.query(CommercePriceSnapshot.item_id).distinct().all()
+		}
+		rollup_history_item_ids = {
+			item_id
+			for item_id, in self.db.query(CommercePriceRollup.item_id).distinct().all()
+		}
+		self.price_history_item_ids = snapshot_history_item_ids | rollup_history_item_ids
 
 		self.recipes_by_output_item_id = {
 			recipe.output_item_id: recipe
@@ -262,6 +273,7 @@ class ProfitEngine:
 			"spread_ratio": round(spread_ratio, 4) if spread_ratio is not None else None,
 			"low_liquidity": low_liquidity,
 			"suspicious_spread": suspicious_spread,
+			"has_price_history": item_id in self.price_history_item_ids,
 			"ingredients": self.build_ingredient_breakdown(item_id),
 			"ingredient_sale_value": round(ingredient_sale_total, 2),
 			"value_add": round(value_add, 2),

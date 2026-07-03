@@ -28,6 +28,7 @@ export type ProfitableCraft = {
 	spread_ratio: number | null
 	low_liquidity: boolean
 	suspicious_spread: boolean
+	has_price_history: boolean
 	ingredient_sale_value: number
 	crafted_item_value: number
 	value_add: number

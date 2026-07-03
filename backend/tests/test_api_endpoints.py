@@ -159,6 +159,7 @@ def test_profit_detail_endpoint_returns_calculated_profit(
 	assert body["profit"] == 500
 	assert body["value_add"] == 330
 	assert body["recommendation"] == "Craft"
+	assert body["has_price_history"] is False
 	assert len(body["ingredients"]) == 2
 
 
@@ -193,6 +194,32 @@ def test_profitable_crafts_endpoint_returns_seeded_recipe(
 	assert len(rows) == 1
 	assert rows[0]["item_id"] == 1
 	assert rows[0]["profit"] == 500
+	assert rows[0]["has_price_history"] is False
+
+
+def test_profitable_crafts_endpoint_marks_recorded_price_history(
+	client: TestClient,
+	db_session: Session,
+) -> None:
+	seed_simple_recipe(db_session)
+	db_session.add(
+		CommercePriceSnapshot(
+			item_id=1,
+			observed_at=datetime.now(timezone.utc),
+			buy_price=500,
+			buy_quantity=10,
+			sell_price=1000,
+			sell_quantity=20,
+		)
+	)
+	db_session.commit()
+
+	response = client.get("/api/profitable-crafts", params={"limit": 5, "min_profit": 0})
+
+	assert response.status_code == 200
+	rows = response.json()
+	assert len(rows) == 1
+	assert rows[0]["has_price_history"] is True
 
 
 def test_listing_depth_endpoint_uses_gw2_listing_data(

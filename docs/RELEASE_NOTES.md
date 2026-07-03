@@ -5,6 +5,8 @@
 - Added a read-only `/api/price-history/{item_id}` endpoint for per-item local price history.
 - Added automatic raw, hourly, or daily history resolution selection based on configured retention windows.
 - Added an item detail drawer price-history panel with range controls and buy/sell price charting.
+- Added price-history availability indicators to the profitable crafts table.
+- Added an empty-history Sync Prices action and rollup min/max range markers to the chart.
 - Added backend endpoint coverage for raw snapshots, rollup history, and missing items.
 - Bumped frontend package metadata and project docs to `0.2.0`.
 

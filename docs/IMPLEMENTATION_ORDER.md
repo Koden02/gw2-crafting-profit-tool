@@ -659,6 +659,8 @@ v0.2.0 completed the first read-only history slice:
 * per-item price history API
 * automatic raw, hourly, or daily resolution selection
 * item detail drawer chart for local buy and sell price history
+* table-level local history availability indicator
+* empty-history sync action and rollup min/max chart markers
 
 Remaining work:
 
