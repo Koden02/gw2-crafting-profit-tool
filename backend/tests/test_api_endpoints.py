@@ -160,6 +160,8 @@ def test_profit_detail_endpoint_returns_calculated_profit(
 	assert body["value_add"] == 330
 	assert body["recommendation"] == "Craft"
 	assert body["has_price_history"] is False
+	assert body["market_flow_status"] == "unknown"
+	assert body["market_flow_score"] is None
 	assert len(body["ingredients"]) == 2
 
 
@@ -195,6 +197,7 @@ def test_profitable_crafts_endpoint_returns_seeded_recipe(
 	assert rows[0]["item_id"] == 1
 	assert rows[0]["profit"] == 500
 	assert rows[0]["has_price_history"] is False
+	assert rows[0]["market_flow_status"] == "unknown"
 
 
 def test_profitable_crafts_endpoint_marks_recorded_price_history(
@@ -220,6 +223,108 @@ def test_profitable_crafts_endpoint_marks_recorded_price_history(
 	rows = response.json()
 	assert len(rows) == 1
 	assert rows[0]["has_price_history"] is True
+
+
+def test_profitable_crafts_endpoint_reports_moving_market_flow(
+	client: TestClient,
+	db_session: Session,
+) -> None:
+	seed_simple_recipe(db_session)
+	now = datetime.now(timezone.utc).replace(microsecond=0)
+	db_session.add_all(
+		[
+			CommercePriceSnapshot(
+				item_id=1,
+				observed_at=now - timedelta(hours=3),
+				buy_price=500,
+				buy_quantity=10,
+				sell_price=1000,
+				sell_quantity=20,
+			),
+			CommercePriceSnapshot(
+				item_id=1,
+				observed_at=now - timedelta(hours=2),
+				buy_price=500,
+				buy_quantity=12,
+				sell_price=1000,
+				sell_quantity=17,
+			),
+			CommercePriceSnapshot(
+				item_id=1,
+				observed_at=now - timedelta(hours=1),
+				buy_price=500,
+				buy_quantity=12,
+				sell_price=1000,
+				sell_quantity=15,
+			),
+			CommercePriceSnapshot(
+				item_id=1,
+				observed_at=now,
+				buy_price=500,
+				buy_quantity=15,
+				sell_price=1000,
+				sell_quantity=12,
+			),
+		]
+	)
+	db_session.commit()
+
+	response = client.get("/api/profitable-crafts", params={"limit": 5, "min_profit": 0})
+
+	assert response.status_code == 200
+	row = response.json()[0]
+	assert row["market_flow_status"] == "moving"
+	assert row["market_flow_score"] > 0
+	assert row["market_flow_observations"] == 4
+	assert row["market_flow_quantity_change_count"] == 3
+
+
+def test_profitable_crafts_endpoint_can_exclude_stalled_market_flow(
+	client: TestClient,
+	db_session: Session,
+) -> None:
+	seed_simple_recipe(db_session)
+	now = datetime.now(timezone.utc).replace(microsecond=0)
+	db_session.add_all(
+		[
+			CommercePriceSnapshot(
+				item_id=1,
+				observed_at=now - timedelta(hours=2),
+				buy_price=500,
+				buy_quantity=10,
+				sell_price=1000,
+				sell_quantity=20,
+			),
+			CommercePriceSnapshot(
+				item_id=1,
+				observed_at=now - timedelta(hours=1),
+				buy_price=500,
+				buy_quantity=10,
+				sell_price=1000,
+				sell_quantity=20,
+			),
+			CommercePriceSnapshot(
+				item_id=1,
+				observed_at=now,
+				buy_price=500,
+				buy_quantity=10,
+				sell_price=1000,
+				sell_quantity=20,
+			),
+		]
+	)
+	db_session.commit()
+
+	included_response = client.get("/api/profitable-crafts", params={"limit": 5, "min_profit": 0})
+	excluded_response = client.get(
+		"/api/profitable-crafts",
+		params={"limit": 5, "min_profit": 0, "exclude_stalled_markets": True},
+	)
+
+	assert included_response.status_code == 200
+	assert included_response.json()[0]["market_flow_status"] == "stalled"
+	assert excluded_response.status_code == 200
+	assert excluded_response.json() == []
 
 
 def test_listing_depth_endpoint_uses_gw2_listing_data(

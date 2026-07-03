@@ -29,6 +29,13 @@ export type ProfitableCraft = {
 	low_liquidity: boolean
 	suspicious_spread: boolean
 	has_price_history: boolean
+	market_flow_status: "unknown" | "stalled" | "slow" | "moving"
+	market_flow_score: number | null
+	market_flow_observations: number
+	market_flow_window_hours: number
+	market_flow_quantity_change_count: number
+	market_flow_price_change_count: number
+	market_flow_summary: string
 	ingredient_sale_value: number
 	crafted_item_value: number
 	value_add: number
@@ -215,6 +222,7 @@ export type ProfitableCraftQuery = {
 	min_sell_quantity?: number
 	exclude_low_liquidity?: boolean
 	exclude_suspicious_spread?: boolean
+	exclude_stalled_markets?: boolean
 	discipline?: string
 	material_pricing?: MaterialPricingMode
 	output_pricing?: OutputPricingMode
@@ -236,6 +244,9 @@ export async function fetchProfitableCrafts(
 	}
 	if (query.exclude_suspicious_spread !== undefined) {
 		params.set("exclude_suspicious_spread", String(query.exclude_suspicious_spread))
+	}
+	if (query.exclude_stalled_markets !== undefined) {
+		params.set("exclude_stalled_markets", String(query.exclude_stalled_markets))
 	}
 	if (query.discipline) params.set("discipline", query.discipline)
 	if (query.material_pricing) params.set("material_pricing", query.material_pricing)

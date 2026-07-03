@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 import json
 import math
 from typing import Any
@@ -11,6 +13,11 @@ from app.models.commerce_price import CommercePrice
 from app.models.item import Item
 from app.models.price_history import CommercePriceRollup, CommercePriceSnapshot
 from app.models.recipe import Recipe
+
+MARKET_FLOW_WINDOW_DAYS = 7
+MARKET_FLOW_MIN_OBSERVATIONS = 3
+MARKET_FLOW_MIN_WINDOW_HOURS = 1
+MARKET_FLOW_STALE_AFTER_HOURS = 48
 
 
 class ProfitEngine:
@@ -33,6 +40,11 @@ class ProfitEngine:
 			for holding in self.db.query(AccountHolding).all()
 		}
 
+		self.recipes_by_output_item_id = {
+			recipe.output_item_id: recipe
+			for recipe in self.db.query(Recipe).all()
+		}
+
 		snapshot_history_item_ids = {
 			item_id
 			for item_id, in self.db.query(CommercePriceSnapshot.item_id).distinct().all()
@@ -42,11 +54,7 @@ class ProfitEngine:
 			for item_id, in self.db.query(CommercePriceRollup.item_id).distinct().all()
 		}
 		self.price_history_item_ids = snapshot_history_item_ids | rollup_history_item_ids
-
-		self.recipes_by_output_item_id = {
-			recipe.output_item_id: recipe
-			for recipe in self.db.query(Recipe).all()
-		}
+		self.market_flow_by_item_id = self.build_market_flow_by_item_id()
 
 	def get_item(self, item_id: int) -> Item | None:
 		return self.items_by_id.get(item_id)
@@ -274,6 +282,7 @@ class ProfitEngine:
 			"low_liquidity": low_liquidity,
 			"suspicious_spread": suspicious_spread,
 			"has_price_history": item_id in self.price_history_item_ids,
+			**self.market_flow_for_item(item_id),
 			"ingredients": self.build_ingredient_breakdown(item_id),
 			"ingredient_sale_value": round(ingredient_sale_total, 2),
 			"value_add": round(value_add, 2),
@@ -289,6 +298,7 @@ class ProfitEngine:
 		min_sell_quantity: int = 0,
 		exclude_low_liquidity: bool = False,
 		exclude_suspicious_spread: bool = False,
+		exclude_stalled_markets: bool = False,
 		discipline: str | None = None,
 		material_pricing: str = "buy",
 		output_pricing: str = "sell",
@@ -322,6 +332,9 @@ class ProfitEngine:
 			if exclude_suspicious_spread and result["suspicious_spread"]:
 				continue
 
+			if exclude_stalled_markets and result["market_flow_status"] == "stalled":
+				continue
+
 			if discipline:
 				disciplines = [value.lower() for value in result["disciplines"]]
 				if discipline.lower() not in disciplines:
@@ -331,6 +344,168 @@ class ProfitEngine:
 		results.sort(key=lambda row: row["profit"], reverse=True)
 
 		return results[:limit]
+
+	def build_market_flow_by_item_id(self) -> dict[int, dict[str, Any]]:
+		output_item_ids = list(self.recipes_by_output_item_id.keys())
+
+		if not output_item_ids:
+			return {}
+
+		now = datetime.now(timezone.utc)
+		start_at = now - timedelta(days=MARKET_FLOW_WINDOW_DAYS)
+		rows = (
+			self.db.query(
+				CommercePriceSnapshot.item_id,
+				CommercePriceSnapshot.observed_at,
+				CommercePriceSnapshot.buy_price,
+				CommercePriceSnapshot.buy_quantity,
+				CommercePriceSnapshot.sell_price,
+				CommercePriceSnapshot.sell_quantity,
+			)
+			.filter(
+				CommercePriceSnapshot.item_id.in_(output_item_ids),
+				CommercePriceSnapshot.observed_at >= start_at,
+			)
+			.order_by(CommercePriceSnapshot.item_id.asc(), CommercePriceSnapshot.observed_at.asc())
+			.all()
+		)
+		points_by_item_id: dict[int, list[Any]] = defaultdict(list)
+
+		for row in rows:
+			points_by_item_id[row.item_id].append(row)
+
+		return {
+			item_id: self.calculate_market_flow(points, now=now)
+			for item_id, points in points_by_item_id.items()
+		}
+
+	def market_flow_for_item(self, item_id: int) -> dict[str, Any]:
+		return self.market_flow_by_item_id.get(item_id, self.default_market_flow())
+
+	def default_market_flow(self) -> dict[str, Any]:
+		return {
+			"market_flow_status": "unknown",
+			"market_flow_score": None,
+			"market_flow_observations": 0,
+			"market_flow_window_hours": 0,
+			"market_flow_quantity_change_count": 0,
+			"market_flow_price_change_count": 0,
+			"market_flow_summary": "No local price history samples are available yet.",
+		}
+
+	def calculate_market_flow(self, points: list[Any], now: datetime) -> dict[str, Any]:
+		observations = len(points)
+
+		if observations == 0:
+			return self.default_market_flow()
+
+		first_observed_at = self.normalize_datetime(points[0].observed_at)
+		latest_observed_at = self.normalize_datetime(points[-1].observed_at)
+		window_hours = max(0.0, (latest_observed_at - first_observed_at).total_seconds() / 3600)
+		latest_age_hours = max(0.0, (now - latest_observed_at).total_seconds() / 3600)
+
+		if observations < MARKET_FLOW_MIN_OBSERVATIONS:
+			return {
+				**self.default_market_flow(),
+				"market_flow_observations": observations,
+				"market_flow_window_hours": round(window_hours, 2),
+				"market_flow_summary": "Not enough local history samples to estimate market flow.",
+			}
+
+		if window_hours < MARKET_FLOW_MIN_WINDOW_HOURS:
+			return {
+				**self.default_market_flow(),
+				"market_flow_observations": observations,
+				"market_flow_window_hours": round(window_hours, 2),
+				"market_flow_summary": "Local history exists, but the sampled window is too short to estimate flow.",
+			}
+
+		if latest_age_hours > MARKET_FLOW_STALE_AFTER_HOURS:
+			return {
+				**self.default_market_flow(),
+				"market_flow_observations": observations,
+				"market_flow_window_hours": round(window_hours, 2),
+				"market_flow_summary": "Latest local history sample is stale.",
+			}
+
+		quantity_change_count = 0
+		price_change_count = 0
+		total_quantity_delta = 0
+
+		for previous, current in zip(points, points[1:]):
+			quantity_changed = False
+			price_changed = False
+
+			for previous_value, current_value in [
+				(previous.buy_quantity, current.buy_quantity),
+				(previous.sell_quantity, current.sell_quantity),
+			]:
+				if previous_value is None or current_value is None:
+					continue
+
+				if previous_value != current_value:
+					quantity_changed = True
+					total_quantity_delta += abs(current_value - previous_value)
+
+			for previous_value, current_value in [
+				(previous.buy_price, current.buy_price),
+				(previous.sell_price, current.sell_price),
+			]:
+				if previous_value is None or current_value is None:
+					continue
+
+				if previous_value != current_value:
+					price_changed = True
+
+			if quantity_changed:
+				quantity_change_count += 1
+
+			if price_changed:
+				price_change_count += 1
+
+		transitions = max(1, observations - 1)
+		quantity_change_ratio = quantity_change_count / transitions
+		price_change_ratio = price_change_count / transitions
+		latest_total_quantity = max(
+			1,
+			(points[-1].buy_quantity or 0) + (points[-1].sell_quantity or 0),
+		)
+		quantity_delta_signal = min(total_quantity_delta / latest_total_quantity, 1)
+		score = round(
+			min(
+				100,
+				(quantity_change_ratio * 70)
+				+ (price_change_ratio * 20)
+				+ (quantity_delta_signal * 10),
+			)
+		)
+
+		if quantity_change_count == 0 and price_change_count == 0:
+			status = "stalled"
+			score = 0
+			summary = f"No quantity or price movement across {observations} local samples."
+		elif score >= 45 or quantity_change_ratio >= 0.35:
+			status = "moving"
+			summary = f"Recent quantity movement across {observations} local samples."
+		else:
+			status = "slow"
+			summary = f"Limited market movement across {observations} local samples."
+
+		return {
+			"market_flow_status": status,
+			"market_flow_score": score,
+			"market_flow_observations": observations,
+			"market_flow_window_hours": round(window_hours, 2),
+			"market_flow_quantity_change_count": quantity_change_count,
+			"market_flow_price_change_count": price_change_count,
+			"market_flow_summary": summary,
+		}
+
+	def normalize_datetime(self, value: datetime) -> datetime:
+		if value.tzinfo is None:
+			return value.replace(tzinfo=timezone.utc)
+
+		return value.astimezone(timezone.utc)
 
 	def calculate_listing_depth(
 		self,

@@ -7,6 +7,8 @@
 - Added an item detail drawer price-history panel with range controls and buy/sell price charting.
 - Added price-history availability indicators to the profitable crafts table.
 - Added an empty-history Sync Prices action and rollup min/max range markers to the chart.
+- Added snapshot-based market flow scoring with moving, slow, stalled, and unknown labels.
+- Added an Exclude Stalled Markets filter and changed the ROI summary card to prefer actionable markets.
 - Added backend endpoint coverage for raw snapshots, rollup history, and missing items.
 - Bumped frontend package metadata and project docs to `0.2.0`.
 

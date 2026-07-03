@@ -26,6 +26,10 @@ The v0.2.0 release starts the historical price analysis track with per-item pric
   - `output_pricing=sell`: value crafted output at list-sell prices.
   - `output_pricing=buy`: value crafted output at instant-sell prices.
 - Liquidity and suspicious spread filters.
+- Snapshot-based market flow scoring:
+  - moving, slow, stalled, or unknown labels
+  - stalled-market filtering
+  - flow-aware actionable ROI summary
 - On-demand Trading Post listing-depth analysis:
   - break-even sale price
   - profitable instant-sell depth

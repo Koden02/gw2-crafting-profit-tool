@@ -78,6 +78,7 @@ type SavedFilterSettings = {
 	minSellQuantity: number
 	excludeLowLiquidity: boolean
 	excludeSuspiciousSpread: boolean
+	excludeStalledMarkets: boolean
 	discipline: string
 	itemNameSearch: string
 	materialPricing: MaterialPricingMode
@@ -236,6 +237,7 @@ function normalizeFilterSettings(value: unknown): SavedFilterSettings | null {
 		excludeLowLiquidity: typeof value.excludeLowLiquidity === "boolean" ? value.excludeLowLiquidity : true,
 		excludeSuspiciousSpread:
 			typeof value.excludeSuspiciousSpread === "boolean" ? value.excludeSuspiciousSpread : true,
+		excludeStalledMarkets: typeof value.excludeStalledMarkets === "boolean" ? value.excludeStalledMarkets : true,
 		discipline: typeof value.discipline === "string" ? value.discipline : "",
 		itemNameSearch: typeof value.itemNameSearch === "string" ? value.itemNameSearch : "",
 		materialPricing,
@@ -330,6 +332,7 @@ type SortKey =
 	| "recommendation"
 	| "profit"
 	| "roi"
+	| "market_flow_score"
 	| "buy_quantity"
 	| "sell_quantity"
 
@@ -760,6 +763,7 @@ export default function ProfitableCraftsPage() {
 	const [minSellQuantity, setMinSellQuantity] = useState(5)
 	const [excludeLowLiquidity, setExcludeLowLiquidity] = useState(true)
 	const [excludeSuspiciousSpread, setExcludeSuspiciousSpread] = useState(true)
+	const [excludeStalledMarkets, setExcludeStalledMarkets] = useState(true)
 	const [discipline, setDiscipline] = useState("")
 	const [itemNameSearch, setItemNameSearch] = useState("")
 
@@ -780,6 +784,7 @@ export default function ProfitableCraftsPage() {
 			minSellQuantity,
 			excludeLowLiquidity,
 			excludeSuspiciousSpread,
+			excludeStalledMarkets,
 			discipline,
 			itemNameSearch,
 			materialPricing,
@@ -801,6 +806,7 @@ export default function ProfitableCraftsPage() {
 					min_sell_quantity: minSellQuantity,
 					exclude_low_liquidity: excludeLowLiquidity,
 					exclude_suspicious_spread: excludeSuspiciousSpread,
+					exclude_stalled_markets: excludeStalledMarkets,
 					discipline: discipline || undefined,
 					material_pricing: materialPricing,
 					output_pricing: outputPricing,
@@ -826,6 +832,7 @@ export default function ProfitableCraftsPage() {
 	}, [
 		discipline,
 		excludeLowLiquidity,
+		excludeStalledMarkets,
 		excludeSuspiciousSpread,
 		limit,
 		materialPricing,
@@ -1049,6 +1056,7 @@ export default function ProfitableCraftsPage() {
 		setMinSellQuantity(settings.minSellQuantity)
 		setExcludeLowLiquidity(settings.excludeLowLiquidity)
 		setExcludeSuspiciousSpread(settings.excludeSuspiciousSpread)
+		setExcludeStalledMarkets(settings.excludeStalledMarkets)
 		setDiscipline(settings.discipline)
 		setItemNameSearch(settings.itemNameSearch)
 		setMaterialPricing(settings.materialPricing)
@@ -1296,6 +1304,63 @@ export default function ProfitableCraftsPage() {
 		)
 	}
 
+	function marketFlowChipColor(
+		status: ProfitableCraft["market_flow_status"],
+	): "success" | "warning" | "error" | "default" {
+		if (status === "moving") {
+			return "success"
+		}
+
+		if (status === "slow") {
+			return "warning"
+		}
+
+		if (status === "stalled") {
+			return "error"
+		}
+
+		return "default"
+	}
+
+	function marketFlowLabel(status: ProfitableCraft["market_flow_status"]): string {
+		if (status === "moving") {
+			return "Moving"
+		}
+
+		if (status === "slow") {
+			return "Slow"
+		}
+
+		if (status === "stalled") {
+			return "Stalled"
+		}
+
+		return "Unknown"
+	}
+
+	function formatMarketFlowScore(value: number | null | undefined): string {
+		if (value === null || value === undefined) {
+			return "-"
+		}
+
+		return `${formatNumber(value)}/100`
+	}
+
+	function MarketFlowChip({ row }: { row: ProfitableCraft }) {
+		const status = row.market_flow_status ?? "unknown"
+
+		return (
+			<Chip
+				label={marketFlowLabel(status)}
+				color={marketFlowChipColor(status)}
+				size="small"
+				title={row.market_flow_summary || "No market flow signal available."}
+				variant={status === "unknown" ? "outlined" : "filled"}
+				sx={{ fontWeight: 750 }}
+			/>
+		)
+	}
+
 	function materialPricingLabel(mode: MaterialPricingMode): string {
 		return mode === "buy" ? "Buy Order" : "Instant Buy"
 	}
@@ -1431,6 +1496,9 @@ export default function ProfitableCraftsPage() {
 				case "roi":
 					comparison = (a.roi ?? -Infinity) - (b.roi ?? -Infinity)
 					break
+				case "market_flow_score":
+					comparison = (a.market_flow_score ?? -Infinity) - (b.market_flow_score ?? -Infinity)
+					break
 				case "buy_quantity":
 					comparison = a.buy_quantity - b.buy_quantity
 					break
@@ -1527,7 +1595,11 @@ export default function ProfitableCraftsPage() {
 
 		const topProfit = filteredRows.reduce((best, row) => (row.profit > best.profit ? row : best), filteredRows[0])
 		const bestValueAdd = filteredRows.reduce((best, row) => (row.value_add > best.value_add ? row : best), filteredRows[0])
-		const highestRoi = filteredRows.reduce<ProfitableCraft | null>((best, row) => {
+		const actionableRows = filteredRows.filter(
+			(row) => row.market_flow_status === "moving" || row.market_flow_status === "slow",
+		)
+		const roiRows = actionableRows.length > 0 ? actionableRows : filteredRows
+		const highestActionableRoi = roiRows.reduce<ProfitableCraft | null>((best, row) => {
 			if (row.roi === null) {
 				return best
 			}
@@ -1562,12 +1634,12 @@ export default function ProfitableCraftsPage() {
 			},
 		]
 
-		if (highestRoi !== null) {
+		if (highestActionableRoi !== null) {
 			highlights.push({
-				label: "Highest ROI",
-				name: highestRoi.name,
-				value: highestRoi.roi ?? 0,
-				formattedValue: formatPercent(highestRoi.roi),
+				label: actionableRows.length > 0 ? "Actionable ROI" : "Highest ROI",
+				name: highestActionableRoi.name,
+				value: highestActionableRoi.roi ?? 0,
+				formattedValue: formatPercent(highestActionableRoi.roi),
 				valueKind: "roi" as const,
 			})
 		}
@@ -1928,6 +2000,16 @@ export default function ProfitableCraftsPage() {
 						<FormControlLabel
 							control={
 								<Checkbox
+									checked={excludeStalledMarkets}
+									onChange={(e) => setExcludeStalledMarkets(e.target.checked)}
+								/>
+							}
+							label="Exclude Stalled Markets"
+						/>
+
+						<FormControlLabel
+							control={
+								<Checkbox
 									checked={watchlistOnly}
 									onChange={(e) => setWatchlistOnly(e.target.checked)}
 								/>
@@ -2242,12 +2324,13 @@ export default function ProfitableCraftsPage() {
 							maxHeight: "calc(100vh - 360px)",
 						}}
 					>
-						<Table stickyHeader size="small" sx={{ minWidth: 2000 }}>
+						<Table stickyHeader size="small" sx={{ minWidth: 2100 }}>
 							<TableHead>
 								<TableRow>
 									<SortableHeader label="Name" sortKey="name" sx={stickyNameHeaderSx} />
 									<TableCell sx={tableHeaderCellSx}>Watch</TableCell>
 									<TableCell sx={tableHeaderCellSx}>History</TableCell>
+									<SortableHeader label="Flow" sortKey="market_flow_score" />
 									<TableCell sx={tableHeaderCellSx}>Risk</TableCell>
 									<TableCell sx={tableHeaderCellSx}>Pressure</TableCell>
 									<TableCell align="right" sx={tableHeaderCellSx}>Instant Limit</TableCell>
@@ -2313,6 +2396,14 @@ export default function ProfitableCraftsPage() {
 											</TableCell>
 											<TableCell>
 												<HistoryAvailabilityChip hasHistory={row.has_price_history} />
+											</TableCell>
+											<TableCell>
+												<Stack spacing={0.5}>
+													<MarketFlowChip row={row} />
+													<Typography variant="caption" color="text.secondary">
+														{formatMarketFlowScore(row.market_flow_score)}
+													</Typography>
+												</Stack>
 											</TableCell>
 											<TableCell>
 												<RiskChips depth={depth} row={row} />
@@ -2548,6 +2639,15 @@ export default function ProfitableCraftsPage() {
 								<Box sx={compactMetricSx}>
 									<Typography variant="caption" color="text.secondary">Sell Quantity</Typography>
 									<Typography sx={{ fontWeight: 750 }}>{formatNumber(selectedItem.sell_quantity)}</Typography>
+								</Box>
+								<Box sx={compactMetricSx}>
+									<Typography variant="caption" color="text.secondary">Market Flow</Typography>
+									<Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.5 }}>
+										<MarketFlowChip row={selectedItem} />
+										<Typography variant="body2" sx={{ fontWeight: 750 }}>
+											{formatMarketFlowScore(selectedItem.market_flow_score)}
+										</Typography>
+									</Stack>
 								</Box>
 							</Box>
 

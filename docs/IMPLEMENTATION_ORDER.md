@@ -661,6 +661,7 @@ v0.2.0 completed the first read-only history slice:
 * item detail drawer chart for local buy and sell price history
 * table-level local history availability indicator
 * empty-history sync action and rollup min/max chart markers
+* snapshot-based market flow score and stalled-market filter
 
 Remaining work:
 
