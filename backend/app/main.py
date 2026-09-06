@@ -2,6 +2,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from app.services.reservation_service import AccountDataChanged
 
 from app.api.account import router as account_router
 from app.api.debug import router as debug_router
@@ -41,6 +43,11 @@ app.add_middleware(
 @app.get("/api/health")
 def health_check() -> dict[str, str]:
 	return {"status": "ok"}
+
+
+@app.exception_handler(AccountDataChanged)
+async def account_data_changed(request, exc):
+	return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 
 app.include_router(sync_router)

@@ -9,7 +9,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.base import Base
-from app.models import AccountHolding, CommercePrice, Item, Recipe, RecipeIngredient
+from app.models import AccountProfile, AccountHolding, CommercePrice, Item, Recipe, RecipeIngredient
 from app.services.profit_engine import ProfitEngine
 
 
@@ -211,27 +211,32 @@ def test_low_liquidity_flag_uses_buy_and_sell_quantities(db_session: Session) ->
 
 def test_ingredient_breakdown_includes_account_holdings(db_session: Session) -> None:
 	seed_simple_recipe(db_session)
+	db_session.add(AccountProfile(id="A", display_name="A", verified=True))
 	db_session.add(
 		AccountHolding(
+			account_id="A",
 			item_id=2,
 			material_count=1,
 			bank_count=0,
 			total_count=1,
+			usable_count=1,
 			last_updated=datetime.now(timezone.utc),
 		)
 	)
 	db_session.add(
 		AccountHolding(
+			account_id="A",
 			item_id=3,
 			material_count=0,
 			bank_count=5,
 			total_count=5,
+			usable_count=5,
 			last_updated=datetime.now(timezone.utc),
 		)
 	)
 	db_session.commit()
 
-	result = ProfitEngine(db_session).calculate_profit(1)
+	result = ProfitEngine(db_session, "A").calculate_profit(1)
 
 	assert result is not None
 	ingredients_by_id = {

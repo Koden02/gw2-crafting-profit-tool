@@ -12,7 +12,7 @@ It describes:
 * profit calculation algorithm
 * data synchronization strategy
 
-This document acts as the **engineering source of truth** during development.
+This document describes the base architecture. [Account quotes](ACCOUNT_QUOTES.md) defines the current account, migration, allocation and confidence contracts; it supersedes earlier inventory and recursion proposals.
 
 ---
 
@@ -73,6 +73,11 @@ recipes
 | output_item_id    | integer      | produced item     |
 | output_item_count | integer      | quantity produced |
 | disciplines       | text         | JSON array        |
+| min_rating | integer | Required crafting rating (not yet enforced) |
+| flags | text | Recipe unlock flags |
+| recipe_type | text | GW2 recipe type |
+| ingredients_complete | boolean | False for legacy/unvalidated ingredient data |
+| unsupported_reason | text | Non-item or guild input/output limitation |
 
 ---
 
@@ -110,42 +115,27 @@ commerce_prices
 | ------------- | ------------ | ------------------- |
 | item_id       | integer (PK) | item id             |
 | buy_price     | integer      | highest buy order   |
-| buy_quantity  | integer      | quantity at buy     |
+| buy_quantity  | integer      | total bid quantity     |
 | sell_price    | integer      | lowest sell listing |
-| sell_quantity | integer      | quantity at sell    |
+| sell_quantity | integer      | total ask quantity    |
 | last_updated  | timestamp    | last refresh time   |
 
 ---
 
-## optional future tables
+## account and history tables
 
-### owned_materials
+`account_profiles` stores verified account identity, snapshot ID, source, timestamp
+and coverage. `account_holdings` is keyed by `(account_id, item_id)` and includes raw
+counts and allocatable counts. `account_stacks` is keyed by account/source/position
+and preserves binding. Legacy holdings remain unassigned and excluded from plans.
 
-Used for inventory-aware crafting.
-
-```
-owned_materials
-```
-
-| column  | type    |
-| ------- | ------- |
-| item_id | integer |
-| count   | integer |
-
----
-
-### price_history (future)
-
-```
-price_history
-```
-
-| column     | type      |
-| ---------- | --------- |
-| item_id    | integer   |
-| buy_price  | integer   |
-| sell_price | integer   |
-| timestamp  | timestamp |
+Public `commerce_price_snapshots` and `commerce_price_rollups` implement shared local
+history. `app_settings` and ignored/tracked-item configuration remain shared public
+cache settings. `AccountCrafting` stores source-status/timestamped character ratings
+and recipe IDs without duplicating stock; `MaterialReservation` stores account/item
+quantities and optional purposes. A profile reservation revision guards concurrent
+updates. Eligibility is enforced before buy/craft route selection in account mode.
+See the models and [migration contract](ACCOUNT_QUOTES.md).
 
 ---
 
@@ -207,112 +197,31 @@ calculate_profit_table()
 
 # Profit Calculation Algorithm
 
-## Overview
+`ProfitEngine` loads all recipe variants, market data and the explicitly selected
+account's stock. `CraftPlanner` provides the common whole-quantity acquisition plan:
 
-The profit engine determines whether crafting an item is profitable.
+1. Select among supported recipes; keep the selected root recipe consistent across
+   table/detail/scenario/plan views. Apply discipline filtering before selection.
+2. Round each craft to whole runs, allocate from one shared stock ledger and reuse
+   intermediate leftovers. Guard cycles and bound graph expansion.
+3. Compare available purchase methods and crafting routes using the selected pricing
+   mode. Missing prices or unsupported costs make routes unavailable.
+4. Return purchases, consumed owned stock, ordered craft steps, leftovers and totals.
 
-It must recursively evaluate ingredient costs.
+All prices use copper. The current fee estimate subtracts floor 5% listing and floor
+10% exchange fees per output unit, with a minimum of one copper each. This is disclosed
+as an estimate because actual transaction grouping can change rounding.
 
-Example recipe tree:
+Table values are per output; plan values are whole-batch totals. `cash_surplus` is
+net output proceeds minus new purchases. `economic_gain` also subtracts the net resale
+value of consumed owned stock. Upfront funding separately includes output listing
+fees, without deducting those fees twice from profit. Liquidation pricing defaults
+to the output scenario. Unknown liquidation prices produce unknown comparisons.
 
-```
-Item A
- ├ Ingredient B
- │  ├ Ingredient D
- │  └ Ingredient E
- └ Ingredient C
-```
-
----
-
-## Trading Post Fees
-
-Total fee:
-
-```
-15%
-```
-
-Formula:
-
-```
-net_sale = sell_price * 0.85
-```
-
----
-
-## Craft Cost Calculation
-
-Ingredient cost is the minimum of:
-
-```
-min(
-    trading_post_buy_price,
-    craft_cost_of_ingredient
-)
-```
-
----
-
-## Recursive Algorithm
-
-Pseudo code:
-
-```
-calculate_craft_cost(item_id):
-
-    if item_id has no recipe:
-        return trading_post_buy_price
-
-    recipe = recipe_for(item_id)
-
-    total_cost = 0
-
-    for ingredient in recipe.ingredients:
-
-        buy_price = trading_post_buy_price(ingredient)
-
-        craft_price = calculate_craft_cost(ingredient)
-
-        ingredient_cost = min(buy_price, craft_price)
-
-        total_cost += ingredient_cost * ingredient.count
-
-    return total_cost
-```
-
----
-
-## Memoization
-
-To prevent repeated calculations:
-
-```
-cache[item_id] = craft_cost
-```
-
-If item exists in cache:
-
-```
-return cached value
-```
-
----
-
-## Profit Calculation
-
-For each recipe output:
-
-```
-craft_cost = calculate_craft_cost(item)
-sell_price = trading_post_sell_price(item)
-
-net_sale = sell_price * 0.85
-
-profit = net_sale - craft_cost
-
-roi = profit / craft_cost
-```
+The planner's deterministic local choices do not claim a global optimum. Buy orders
+and sell listings require future fills. Instant depth checks walk both material asks
+and output bids; the older output-only depth panel remains advisory. See
+[exact contracts and limitations](ACCOUNT_QUOTES.md).
 
 ---
 
@@ -552,13 +461,13 @@ Trading post items
 
 ~15k
 
-The system should compute profitability in under:
+The original performance target was under:
 
 ```
 1 second
 ```
 
-after data has been cached.
+after data has been cached. This is not yet achieved by the full graph scan. A temporary copy of the September 2026 cache (13,141 recipes, without history rows) loaded in about 2.9 seconds and scanned quotes in about 7.1 seconds. Live history aggregation and API latency add to that; this benchmark does not verify current market accuracy.
 
 ---
 
@@ -566,10 +475,9 @@ after data has been cached.
 
 Possible future enhancements:
 
-* inventory-aware crafting
-* trading post liquidity analysis
-* historical price analysis
-* crafting shopping lists
+* JSON imports and additional inventory sources
+* quantity suggestions and shared multi-craft allocation
+* future analytics beyond existing depth/history/shopping features
 * desktop application packaging
 
 ---

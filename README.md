@@ -9,9 +9,11 @@
 
 GW2 Craft Profit Tool is a local full-stack app for analyzing Guild Wars 2 crafting profitability using the official Guild Wars 2 API, SQLite, recursive recipe costing, and Trading Post prices.
 
-Project status: Early Development v0.2.0.
+Project status: Early Development v0.2.0, with local account isolation, reliable quotes, crafting eligibility and reservations.
 
-The v0.2.0 release starts the historical price analysis track with per-item price history reads and item drawer charts over locally recorded price snapshots and rollups. The app also includes local data sync, automatic server-side price refresh, configurable snapshot retention, dedicated options and tracked-item review pages, sync overlap protection, craft profitability analysis, Trading Post depth visibility, table-level risk signals, owned-material adjusted batch planning, saved filters, watchlists, endpoint smoke coverage, and a usable frontend for browsing profitable crafts. Full inventory-aware table ranking, trend scoring, and packaging are planned future work.
+See [account quotes and upgrade instructions](docs/ACCOUNT_QUOTES.md). Restart the backend, refresh recipes once, and sync an explicitly selected account. Legacy holdings remain preserved with an unknown owner and are excluded from plans.
+
+The v0.2.0 release starts the historical price analysis track with per-item price history reads and item drawer charts over locally recorded price snapshots and rollups. The app also includes local data sync, automatic server-side price refresh, configurable snapshot retention, dedicated options and tracked-item review pages, sync overlap protection, craft profitability analysis, Trading Post depth visibility, table-level risk signals, owned-material adjusted batch planning, saved filters, watchlists, endpoint smoke coverage, and a usable frontend for browsing profitable crafts. Selected-account results now verify character crafting levels and recipe eligibility, exclude reserved bank/material stock, and rank by gain after valuing consumed stock. JSON import, other inventories, automatic quantity suggestions, full cooldown/non-TP support, trend scoring and packaging remain future work. Quotes still depend on the stated market assumptions.
 
 ## Implemented Features
 
@@ -29,7 +31,7 @@ The v0.2.0 release starts the historical price analysis track with per-item pric
 - Snapshot-based market flow scoring:
   - moving, slow, stalled, or unknown labels
   - stalled-market filtering
-  - flow-aware actionable ROI summary
+  - ROI summary informed by listing activity (not confirmed sales)
 - On-demand Trading Post listing-depth analysis:
   - break-even sale price
   - profitable instant-sell depth
@@ -64,9 +66,14 @@ The v0.2.0 release starts the historical price analysis track with per-item pric
   - frontend sync controls for items, recipes, and Trading Post prices
   - dedicated options page for automatic price-history status, retention, estimates, and explanations
   - dedicated tracked-items page for relevance review and ignore controls
-  - read-only account holdings sync for material storage and bank inventory
+  - account data sync for bank/material inventory, active character crafting levels and recipe unlocks
+  - eligible-crafts filter with named crafters for root/intermediate steps and explicit missing/stale coverage
+  - account-scoped material reservations that survive syncs and reduce usable stock once
   - batch craft planner with missing-material shopping list
-  - out-of-pocket batch profit and owned-material coverage in the planner
+  - separate purchase cost, upfront gold, cash surplus and economic gain after valuing consumed owned stock
+  - account selection and account-scoped holdings, watchlists and saved filters
+  - backend whole-batch plans, recipe alternatives, cycle protection and shared ingredient/leftover allocation
+  - optional material and output depth checks, budget checks and stale-data warnings
   - Trading Post market-depth view in the item detail drawer
   - local price history chart in the item detail drawer
   - empty-history sync action and rollup min/max range markers

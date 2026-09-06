@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 from app.db.base import Base
 from app.db.dependencies import get_db
 from app.main import app
-from app.models import AccountHolding, CommercePrice, CommercePriceRollup, CommercePriceSnapshot, Item, Recipe, RecipeIngredient
+from app.models import AccountProfile, AccountHolding, CommercePrice, CommercePriceRollup, CommercePriceSnapshot, Item, Recipe, RecipeIngredient
 from app.services.gw2_client import GW2Client
 from app.services.price_history_service import PriceHistoryService
 from app.services.price_sync_lock import price_sync_lock
@@ -722,8 +722,10 @@ def test_account_holdings_status_endpoint_reports_owned_totals(
 	client: TestClient,
 	db_session: Session,
 ) -> None:
+	db_session.add(AccountProfile(id="A", display_name="A", verified=True, last_updated=datetime.now(timezone.utc)))
 	db_session.add(
 		AccountHolding(
+			account_id="A",
 			item_id=2,
 			material_count=3,
 			bank_count=4,
@@ -733,10 +735,80 @@ def test_account_holdings_status_endpoint_reports_owned_totals(
 	)
 	db_session.commit()
 
-	response = client.get("/api/account/holdings/status")
+	response = client.get("/api/account/holdings/status", params={"account_id": "A"})
 
 	assert response.status_code == 200
 	body = response.json()
 	assert body["holding_count"] == 1
 	assert body["total_owned"] == 7
 	assert body["last_updated"] is not None
+
+def test_plan_api_account_scope_and_validation(client, db_session):
+    from app.models import AccountProfile
+    seed_simple_recipe(db_session)
+    for account, count in [("A", 1), ("B", 4)]:
+        db_session.add(AccountProfile(id=account, display_name=account, verified=True,
+                                      last_updated=datetime.now(timezone.utc), snapshot_id=account))
+        db_session.add(AccountHolding(account_id=account, item_id=2, total_count=count,
+                                      usable_count=count, material_count=count, bank_count=0,
+                                      last_updated=datetime.now(timezone.utc)))
+    db_session.commit()
+    a = client.get("/api/profit/1/plan", params={"account_id": "A", "eligible_only": False}).json()
+    b = client.get("/api/profit/1/plan", params={"account_id": "B", "eligible_only": False}).json()
+    assert a["purchase_cost"] == 250
+    assert b["purchase_cost"] == 150
+    assert a["account_id"] == a["snapshot_id"] == "A"
+    assert client.get("/api/account/holdings/status").status_code == 422
+    assert client.get("/api/profit/1/plan", params={"quantity": 0}).status_code == 422
+    assert client.get("/api/profit/1/plan", params={"budget": -1}).status_code == 422
+    assert client.get("/api/profit/1", params={"output_pricing": "wrong"}).status_code == 422
+    for path in ["/api/profit/1/plan", "/api/profit/1", "/api/profitable-crafts", "/api/profit/1/scenarios"]:
+        assert client.get(path, params={"account_id": "unknown"}).status_code == 404
+    assert client.get("/api/profit/1/plan").json()["consumed"] == []
+
+
+def test_table_detail_and_plan_same_recipe_and_scenario(client, db_session):
+    seed_simple_recipe(db_session)
+    add_recipe(db_session, 2, 1, [(2, 1)])
+    db_session.commit()
+    for materials, output in [("buy", "buy"), ("buy", "sell"), ("sell", "buy"), ("sell", "sell")]:
+        params = {"material_pricing": materials, "output_pricing": output}
+        table = client.get("/api/profitable-crafts", params=params).json()[0]
+        detail = client.get("/api/profit/1", params=params).json()
+        plan = client.get("/api/profit/1/plan", params=params).json()
+        assert table["recipe_id"] == detail["recipe_id"] == plan["recipe_id"]
+        assert table["craft_cost"] == detail["craft_cost"] == plan["purchase_cost"]
+        assert table["net_sale"] == detail["net_sale"] == plan["net_revenue"]
+
+
+def test_selected_recipe_stays_consistent_across_api_views(client, db_session, monkeypatch):
+    seed_simple_recipe(db_session)
+    add_recipe(db_session, 99, 1, [(2, 1)])
+    db_session.commit()
+    params = {"recipe_id": 1, "material_pricing": "sell"}
+    detail = client.get("/api/profit/1", params=params).json()
+    plan = client.get("/api/profit/1/plan", params=params).json()
+    scenarios = client.get("/api/profit/1/scenarios", params=params).json()
+    assert detail["recipe_id"] == plan["recipe_id"] == 1
+    assert detail["craft_cost"] == plan["purchase_cost"] == 610
+    assert all(s["recipe_id"] == 1 for s in scenarios)
+    assert sum(i["total_cost"] for i in detail["ingredients"]) == 610
+    assert detail["ingredients"][0]["purchase_price"] == 200
+    from app.services.gw2_client import GW2Client
+    monkeypatch.setattr(GW2Client, "fetch_commerce_listing", lambda self, item_id: {
+        "buys": [{"unit_price": 1000, "quantity": 10}], "sells": []})
+    depth = client.get("/api/profit/1/listing-depth", params=params).json()
+    assert depth["craft_cost"] == 610
+    assert client.get("/api/profit/1", params={"recipe_id": 999}).status_code == 404
+
+
+def test_cached_status_timestamps_are_explicit_utc(client, db_session):
+    seed_simple_recipe(db_session)
+    db_session.add(AccountProfile(id="A", display_name="A", verified=True,
+                                  last_updated=datetime(2026, 9, 5, 15, 0)))
+    db_session.commit()
+    def utc(value):
+        return value.endswith("Z") or value.endswith("+00:00")
+    assert utc(client.get("/api/sync/status").json()["price_last_updated"])
+    assert utc(client.get("/api/account/holdings/status?account_id=A").json()["last_updated"])
+    assert utc(client.get("/api/account/profiles").json()[0]["last_updated"])

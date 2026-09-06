@@ -1,5 +1,16 @@
 # Release Notes
 
+## Unreleased
+
+- Added verified account selection with isolated holdings, crafting capabilities, reservations, watchlists and saved filters.
+- Added transactional SQLite upgrades that preserve public caches and retain legacy holdings with an unknown owner and no allocatable stock.
+- Replaced unit-only recipe costing with whole-batch shopping plans, recipe alternatives, shared ingredient allocation and cycle protection.
+- Separated purchase costs, upfront gold, cash surplus and economic gain after valuing consumed owned materials.
+- Added selected-account crafting eligibility with named crafters, recipe unlock checks and explicit missing or stale source coverage.
+- Added account-scoped material reservations and optional budget and two-sided market-depth checks.
+- Added regression coverage for migrations, account isolation, eligibility, reservations and quote consistency.
+- Existing installations must restart the backend, refresh recipes and prices, and sync an explicitly selected account; see [upgrade instructions and remaining limitations](ACCOUNT_QUOTES.md).
+
 ## v0.2.0
 
 - Added a read-only `/api/price-history/{item_id}` endpoint for per-item local price history.

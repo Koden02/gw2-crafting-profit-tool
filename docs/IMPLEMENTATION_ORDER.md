@@ -14,6 +14,8 @@ The goals are to:
 
 This file acts as the **source of truth for development priorities**.
 
+September 2026 reconciliation: the account-isolation and reliable-quote prerequisite is implemented; see [contracts, limitations and acceptance tests](ACCOUNT_QUOTES.md). Verified account crafting eligibility and reservations are also implemented for direct API data and bank/material storage; broader inventory/import support remains next. The older phases below are historical sequencing, not proof of current completeness.
+
 ---
 
 # Guiding Principles
@@ -325,13 +327,15 @@ Implemented:
 
 ---
 
-# Remaining MVP Work
+# Historical MVP Sequence
 
-The following tasks remain before the application can be considered a **complete MVP**.
+Phases A-E already have implementation. Their remaining limitations are recorded below and in the current account-quote contract.
 
 ---
 
 # Phase A – Craft vs Sell Ingredient Comparison
+
+Status: Implemented and tested. Pricing modes and multi-output units now agree; missing liquidation values remain unknown.
 
 Goal:
 
@@ -366,6 +370,8 @@ Break Even
 
 # Phase B – Search Functionality
 
+Status: Implemented for loaded frontend rows. Global backend item search is not implemented.
+
 Goal:
 
 Allow users to find specific items quickly.
@@ -391,6 +397,8 @@ partial name
 
 # Phase C – UI Usability Improvements
 
+Status: Substantially implemented in the existing table/drawer. Further redesign is deferred.
+
 Planned improvements:
 
 * highlight selected row
@@ -404,6 +412,8 @@ Planned improvements:
 ---
 
 # Phase D – Sync Visibility
+
+Status: Implemented: sync status, timestamps and manual controls; automatic price refresh is also available.
 
 Goal:
 
@@ -425,6 +435,8 @@ GET /api/sync/status
 ---
 
 # Phase E – Basic Automated Tests
+
+Status: Implemented: backend and API regression suites cover quotes, account isolation and price history. Browser behavior has smoke coverage, not an automated frontend suite.
 
 Backend tests should cover:
 
@@ -467,11 +479,13 @@ A developer can clone the repo and run the application easily.
 
 # Post-MVP Roadmap
 
-These features will be implemented **after MVP completion**.
+This section preserves the original expansion sequence. Several features are already implemented; the status notes below describe their present limits.
 
 ---
 
 ## Inventory-Aware Crafting
+
+Status: Partial. Selected-account bank/material allocation, backend shopping plans, active character/recipe eligibility, simple reservations and economic table ranking are implemented. Other inventory sources, imports, full cooldown/non-TP support and automatic quantity suggestions remain.
 
 Use GW2 account API keys to analyze owned materials.
 
@@ -488,9 +502,11 @@ true profit calculation
 
 ## v0.2 - Trading Post Order-Book Depth and Sell-Limit Analysis
 
+Status: Implemented as advisory output-only depth panels plus optional two-sided depth checks in quantity plans. These are current order-book observations, not guaranteed sales or suggested craft quantities.
+
 Goal:
 
-Determine how many units of a crafted item can realistically be sold before the market price drops below break-even.
+Measure current bid depth under stated input costs. Validate whole quantities and material depth in the plan before treating any depth figure as actionable.
 
 This feature should use the GW2 API listings endpoint:
 
@@ -646,6 +662,8 @@ Do not treat current listing depth as proof that items will sell quickly. The v0
 
 ## Historical Price Tracking
 
+Status: Implemented: local snapshots, rollups, retention/pruning, per-item history API and charts. Flow scores are listing-activity heuristics; trade volume and sale speed remain unknown.
+
 Store periodic price snapshots to analyze:
 
 ```
@@ -687,10 +705,19 @@ analytics views
 
 # Immediate Next Development Task
 
-The next task to implement is:
+Validate the local upgrade and real account sync, then **expand inventory coverage
+through the common account-data model**.
 
-**Craft vs Sell Ingredient Comparison**
+The selected-account eligible-crafts milestone is implemented for direct API crafting
+levels/unlocks, bank/material storage and simple reservations. Craft-versus-sell,
+history/charts and backend shopping plans already exist.
 
-This feature ensures the tool correctly identifies when crafting adds value versus simply selling the materials.
+1. Validate startup migrations, refresh public recipes/prices, and use an account key
+   with account, inventories, characters and unlocks scopes to check real coverage.
+2. Add shared/character inventory adapters with source replacement and binding rules.
+3. Add JSON import after resolving explicit identity association and obtaining a real
+   export with recipe IDs. Prove API/import parity and no overlapping inventory counts.
 
----
+Quantity suggestions, complete time-gate allowances, non-TP acquisition and multi-craft
+allocation are later work. See [current contracts and acceptance tests](ACCOUNT_QUOTES.md).
+Keep packaging, unrelated UI redesign and additional analytics outside this milestone.
