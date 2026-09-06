@@ -9,10 +9,11 @@ from typing import Any
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.account_holding import AccountHolding
-from app.models.account_profile import AccountProfile, LEGACY_ACCOUNT_ID
+from app.models.account_profile import AccountProfile, AccountStack, LEGACY_ACCOUNT_ID
 from app.models.account_crafting import AccountCrafting, MaterialReservation
 from app.services.crafting_eligibility import CraftingEligibility
 from app.services.reservation_service import AccountDataChanged
+from app.services.inventory_coverage import source_fresh
 from app.services.craft_planner import CraftPlanner, Allocation
 from app.models.commerce_price import CommercePrice
 from app.models.item import Item
@@ -26,7 +27,7 @@ MARKET_FLOW_STALE_AFTER_HOURS = 48
 
 
 class ProfitEngine:
-	def __init__(self, db: Session, account_id: str | None = None) -> None:
+	def __init__(self, db: Session, account_id: str | None = None, include_history: bool = True) -> None:
 		self.db = db
 		self.account_id = account_id
 		# One SELECT keeps holdings and their snapshot identity coherent even when
@@ -38,6 +39,7 @@ class ProfitEngine:
 		if account_id and (not self.profile or not self.profile.verified or account_id == LEGACY_ACCOUNT_ID):
 			raise ValueError("Select a verified account.")
 		self.crafting_data, self.reservations = {}, {}
+		self.stock_locations = []
 		for attempt in range(3):
 			if not self.profile:
 				break
@@ -45,6 +47,9 @@ class ProfitEngine:
 			capabilities = db.query(AccountCrafting).filter_by(account_id=account_id).populate_existing().one_or_none()
 			self.crafting_data = json.loads(capabilities.payload) if capabilities and capabilities.snapshot_id == version[0] else {}
 			self.reservations = {r.item_id: r.quantity for r in db.query(MaterialReservation).filter_by(account_id=account_id).populate_existing().all()}
+			self.stock_locations = [dict(item_id=r.item_id, source=r.source, position=r.position, quantity=r.count)
+			                        for r in db.query(AccountStack).filter_by(account_id=account_id).populate_existing().all()
+			                        if not r.binding and not r.bound_to]
 			current = db.query(AccountProfile.snapshot_id, AccountProfile.reservation_revision).filter_by(id=account_id).one()
 			if tuple(current) == version:
 				break
@@ -74,6 +79,10 @@ class ProfitEngine:
 		self.recipes_by_output_item_id: dict[int, list[Recipe]] = defaultdict(list)
 		for recipe in self.db.query(Recipe).options(selectinload(Recipe.ingredients)).order_by(Recipe.id).all():
 			self.recipes_by_output_item_id[recipe.output_item_id].append(recipe)
+		self.eligibility = CraftingEligibility(self)
+		if not include_history:
+			self.price_history_item_ids, self.market_flow_by_item_id = set(), {}
+			return
 
 		snapshot_history_item_ids = {
 			item_id
@@ -159,7 +168,21 @@ class ProfitEngine:
 		return price is None or (datetime.now(timezone.utc) - self.normalize_datetime(price.last_updated)).total_seconds() > 3600
 
 	def holdings_are_stale(self) -> bool:
-		return not self.profile or not self.profile.last_updated or (datetime.now(timezone.utc) - self.normalize_datetime(self.profile.last_updated)).total_seconds() > 3600
+		if not self.profile or not self.profile.last_updated:
+			return True
+		age = (datetime.now(timezone.utc) - self.normalize_datetime(self.profile.last_updated)).total_seconds()
+		coverage = json.loads(self.profile.coverage or "{}")
+		return not -300 <= age <= 3600 or any(not source_fresh(source) for source in coverage.values())
+
+	def owned_locations(self, item_id: int, count: int) -> list[dict]:
+		rows = []
+		for location in sorted(self.stock_locations, key=lambda r: (r["source"], r["position"])):
+			if location["item_id"] != item_id or not count:
+				continue
+			take = min(count, location["quantity"])
+			rows.append({**location, "quantity": take})
+			count -= take
+		return rows
 
 	def market_plan(self, item_id: int, material_pricing: str = "buy") -> dict:
 		key = (item_id, material_pricing)

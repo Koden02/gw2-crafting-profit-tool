@@ -52,6 +52,12 @@ def migrate(engine: Engine) -> None:
                 if "reservation_revision" not in columns:
                     connection.exec_driver_sql("ALTER TABLE account_profiles ADD COLUMN reservation_revision INTEGER NOT NULL DEFAULT 0")
                 connection.execute(text("INSERT INTO schema_migrations VALUES (2)"))
+            if 3 not in done:
+                columns = {c["name"] for c in inspect(connection).get_columns("account_holdings")}
+                for name in ("shared_count", "character_count"):
+                    if name not in columns:
+                        connection.exec_driver_sql(f"ALTER TABLE account_holdings ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
+                connection.execute(text("INSERT INTO schema_migrations VALUES (3)"))
             connection.commit()
         except Exception:
             connection.rollback()

@@ -60,6 +60,9 @@ export default function AccountCraftingPanel({ accountId, onChanged }: { account
             {" "}Automatic recipes and fresh character recipe lists can still establish eligibility.
         </Alert>}
         {error && <Alert severity="error">{error}</Alert>}
+        {crafting?.inventory_coverage && <Alert severity={crafting.inventory_coverage.complete ? "success" : "warning"} sx={{ mt: 1 }}>
+            {crafting.inventory_coverage.complete ? "Inventory coverage is fresh: bank, material storage, shared slots and character bags." : "Inventory coverage is missing or stale. Sync Account Data to include shared slots and every character’s bags before finding batches."}
+        </Alert>}
         <Box component="details" sx={{ mt: 1 }}>
             <Box component="summary" sx={{ cursor: "pointer", py: 1 }}>Character coverage and material reservations</Box>
             <Typography variant="body2">Only active disciplines are eligible. Missing or stale sources remain unknown; daily-limited crafting routes are excluded. Refresh account data with account, inventories, characters and unlocks permissions.</Typography>
@@ -67,6 +70,9 @@ export default function AccountCraftingPanel({ accountId, onChanged }: { account
                 <Typography>{character.name}: {character.disciplines.map(d => `${d.discipline} ${d.rating}${d.active ? "" : " (inactive)"}`).join(", ") || "No known disciplines"}</Typography>
                 <Typography variant="caption">Levels {character.crafting.fresh ? "fresh" : "unverified"} ({formatDateTime(character.crafting.fetched_at)}); recipes {character.recipes.fresh ? `${character.recipes.count} available` : "unverified"}.</Typography>
             </Box>)}
+            {crafting?.inventory_coverage?.sources.filter(source => source.source !== "character_roster").map(source => <Typography key={source.source} variant="caption" display="block">
+                {source.source.startsWith("character:") ? `${source.source.slice(10)}’s bags` : source.source === "materials" ? "Material storage" : source.source === "shared" ? "Shared slots" : "Bank"}: {source.fresh ? "fresh" : "missing or stale"} ({formatDateTime(source.fetched_at)})
+            </Typography>)}
             <Typography sx={{ mt: 2 }}>Reservations apply only to this account and survive syncs. Set a quantity to zero to release it. Reserved quantities are excluded from every account plan; they may exceed current stock for a future goal.</Typography>
             <Stack direction="row" spacing={1} sx={{ my: 2 }}>
                 <TextField label="Find owned or reserved material" size="small" value={search} onChange={e => { setMaterials(null); setSearch(e.target.value) }} />

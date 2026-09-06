@@ -219,6 +219,8 @@ export type AccountHoldingsSyncResult = {
 	status: string
 	material_items: number
 	bank_items: number
+	shared_items: number
+	character_items: number
 	unique_items: number
 	total_owned: number
 	last_updated: string
@@ -621,7 +623,7 @@ export type CraftPlan = {
     fee_model: string
     allocation_policy: string
     purchases: { item_id: number; name: string; quantity: number; cost: number }[]
-    consumed: { item_id: number; name: string; quantity: number }[]
+    consumed: { item_id: number; name: string; quantity: number; locations?: { source: string; position: string; quantity: number }[] }[]
     steps: { recipe_id: number; item_id: number; name: string; runs: number; produced: number; eligibility: string; recipe_state: string; crafter: string | null; eligible_characters: EligibleCharacter[] }[]
     leftovers: { item_id: number; name: string; quantity: number }[]
 }
@@ -653,8 +655,31 @@ export async function fetchCraftPlan(itemId: number, options: {
 export type SourceStatus = { status: string; fresh: boolean; fetched_at: string | null; error?: string; count: number }
 export type CraftingStatus = {
     account_id: string; snapshot_id: string | null
+    inventory_coverage: InventoryCoverage
     characters_source: SourceStatus; account_recipes_source: SourceStatus
     characters: { name: string; crafting: SourceStatus; recipes: SourceStatus; disciplines: { discipline: string; rating: number; active: boolean }[] }[]
+}
+
+export type InventoryCoverage = { complete: boolean; missing_or_stale: string[]; sources: { source: string; fresh: boolean; fetched_at: string | null; status: string }[] }
+export type BatchSearch = {
+    account_id: string; snapshot_id: string; reservation_revision: number
+    budget: number; minimum_gain: number; max_output: number; observed_at: string
+    inventory_coverage: InventoryCoverage
+    suggestions: { plan: CraftPlan; quantity_limit_reason: string }[]
+    issues: string[]; candidate_count: number; candidates_checked: number; quantities_checked: number
+    search_limited: boolean; shortlist_truncated: boolean; scope: string
+    market_observed_from?: string | null; market_observed_to?: string | null
+}
+
+export async function fetchBatchRecommendations(options: { account_id: string; budget: number; minimum_gain: number; max_output: number }, signal: AbortSignal): Promise<BatchSearch> {
+    const response = await fetch(`${API_BASE_URL}/api/craft-recommendations`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(options), signal,
+    })
+    if (!response.ok) {
+        const body = await response.json().catch(() => null)
+        throw new Error(typeof body?.detail === "string" ? body.detail : "Could not find batches. Refresh account data and prices, then retry.")
+    }
+    return response.json()
 }
 export type ReservedMaterial = { item_id: number; name: string; owned: number; usable: number; reserved: number; available: number; purpose: string }
 export type AccountMaterials = { account_id: string; snapshot_id: string | null; reservation_revision: number; total: number; rows: ReservedMaterial[] }

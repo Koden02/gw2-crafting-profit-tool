@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added gw2efficiency, GW2TP and Wiki links to item details and crafting plans, plus market links for shopping ingredients. Calculator links carry the displayed output quantity; reference pages open in a new tab without transferring local account data or reservations.
+- Fixed account sync rejecting material items repeated across API categories. Matching balances count once; conflicting counts or bindings still preserve the previous snapshot and report an error.
+- Added **Find a profitable crafting batch**: account-eligible whole quantities constrained by budget, minimum economic gain, output cap and live instant-buy/instant-sell depth.
+- Expanded account inventory to shared slots and character bags, preserving locations, bindings, source freshness and reservations through transactional replacement. Migration v3 adds aggregate columns without rebuilding caches.
+- Added gathering locations, refreshed shopping plans and the latest 50 manually recorded completed results per account in browser storage; see [usage, search limits and validation](CRAFT_BATCHES.md).
+- Kept database backups, SQLite sidecars and local development environment files outside Git.
 - Added verified account selection with isolated holdings, crafting capabilities, reservations, watchlists and saved filters.
 - Added transactional SQLite upgrades that preserve public caches and retain legacy holdings with an unknown owner and no allocatable stock.
 - Replaced unit-only recipe costing with whole-batch shopping plans, recipe alternatives, shared ingredient allocation and cycle protection.

@@ -236,7 +236,7 @@ def test_migration_quarantines_legacy_and_is_idempotent(tmp_path):
         assert db.execute(text("SELECT total_count FROM account_holdings_legacy_v0")).scalar() == 7
         assert db.execute(text("SELECT ingredients_complete FROM recipes")).scalar() == 0
         assert db.execute(text("SELECT value FROM public_sentinel")).scalar() == "keep"
-        assert db.execute(text("SELECT count(*) FROM schema_migrations")).scalar() == 2
+        assert db.execute(text("SELECT count(*) FROM schema_migrations")).scalar() == 3
     engine.dispose()
 
 

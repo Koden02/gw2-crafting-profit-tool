@@ -14,6 +14,8 @@ class AccountHolding(Base):
 	item_id: Mapped[int] = mapped_column(Integer, primary_key=True)
 	material_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 	bank_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+	shared_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+	character_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 	total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 	usable_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 	last_updated: Mapped[datetime] = mapped_column(DateTime, nullable=False)

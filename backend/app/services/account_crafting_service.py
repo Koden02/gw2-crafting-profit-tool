@@ -45,9 +45,9 @@ def collect_source(fetch, normalize, previous=None):
                 "error": "Missing API permissions." if denied else "Source unavailable or malformed; refresh again."}
 
 
-def collect_crafting(client, api_key, previous=None):
+def collect_crafting(client, api_key, previous=None, roster=None):
     previous = previous or {}
-    roster = collect_source(lambda: client.fetch_character_names(api_key), character_names, previous.get("characters"))
+    roster = roster if roster is not None else collect_source(lambda: client.fetch_character_names(api_key), character_names, previous.get("characters"))
     account_recipes = collect_source(lambda: client.fetch_account_recipes(api_key), recipe_ids, previous.get("account_recipes"))
     prior_characters = previous.get("by_character", {})
     if roster["status"] != "ok":

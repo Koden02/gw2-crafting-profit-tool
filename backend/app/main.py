@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from app.services.reservation_service import AccountDataChanged
 
 from app.api.account import router as account_router
+from app.api.craft_recommendations import router as recommendations_router
 from app.api.debug import router as debug_router
 from app.api.price_history import router as price_history_router
 from app.api.profitable_crafts import router as profitable_crafts_router
@@ -52,6 +53,7 @@ async def account_data_changed(request, exc):
 
 app.include_router(sync_router)
 app.include_router(account_router)
+app.include_router(recommendations_router)
 app.include_router(debug_router)
 app.include_router(profit_router)
 app.include_router(profitable_crafts_router)

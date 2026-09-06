@@ -54,3 +54,12 @@ export function formatDateTime(value: string | number | Date | null | undefined)
 
 	return date.toLocaleString()
 }
+
+export function formatInventoryLocation(source: string, position: string): string {
+    if (source.startsWith("character:")) {
+        const [bag, slot] = position.split(":").map(Number)
+        return `${source.slice(10)}, bag ${bag + 1}, slot ${slot + 1}`
+    }
+    if (source === "materials") return "material storage"
+    return `${source === "shared" ? "shared inventory" : "bank"}, slot ${Number(position) + 1}`
+}

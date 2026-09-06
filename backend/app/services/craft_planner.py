@@ -237,7 +237,7 @@ class CraftPlanner:
         if stale_ids:
             issues.append("Stale or missing cached prices: " + ", ".join(map(str, stale_ids)) + ".")
         if use_owned:
-            issues.append("Only unbound bank/material stock is allocated; account reservations are excluded. Other inventories are not included.")
+            issues.append("Only synced unbound inventory is allocated; bound items, equipment and account reservations are excluded.")
             if self.engine.holdings_are_stale():
                 issues.append("Account holdings are stale; refresh before buying or crafting.")
         # Fees need funding before the sale. Do not subtract these from net revenue a second time.
@@ -262,6 +262,9 @@ class CraftPlanner:
         rows = lambda counts: [dict(item_id=i, name=self.engine.get_item_name(i), quantity=n)
                                for i, n in sorted(counts.items()) if n > 0]
         purchases = rows(state.purchases)
+        consumed = rows(state.consumed)
+        for row in consumed:
+            row["locations"] = self.engine.owned_locations(row["item_id"], row["quantity"])
         for row in purchases:
             row["cost"] = state.purchase_costs[row["item_id"]]
         relevant_ids = used_ids | {step["item_id"] for step in state.steps}
@@ -275,5 +278,5 @@ class CraftPlanner:
                 "economic_gain": gain, "cash_surplus": cash_surplus, "additional_gold_needed": needed,
                 "budget": budget, "within_budget": None if budget is None or needed is None else needed <= budget,
                 "stale_price_item_ids": stale_ids, "issues": issues,
-                "purchases": purchases, "consumed": rows(state.consumed),
+                "purchases": purchases, "consumed": consumed,
                 "steps": state.steps, "leftovers": rows(state.leftovers)}

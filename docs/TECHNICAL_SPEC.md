@@ -475,8 +475,8 @@ after data has been cached. This is not yet achieved by the full graph scan. A t
 
 Possible future enhancements:
 
-* JSON imports and additional inventory sources
-* quantity suggestions and shared multi-craft allocation
+* JSON imports with explicit identity and source-coverage parity
+* shared multi-craft allocation beyond the implemented [bounded batch suggestions](CRAFT_BATCHES.md)
 * future analytics beyond existing depth/history/shopping features
 * desktop application packaging
 

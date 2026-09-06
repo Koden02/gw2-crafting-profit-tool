@@ -50,6 +50,8 @@ import { formatCoins, formatDateTime, formatNumber, formatPercent } from "../uti
 
 import CraftPlanPanel from "../components/CraftPlanPanel"
 import AccountCraftingPanel from "../components/AccountCraftingPanel"
+import BatchRecommendationsPanel from "../components/BatchRecommendationsPanel"
+import ItemReferenceLinks, { ItemMarketLink } from "../components/ItemReferenceLinks"
 
 const disciplineOptions = [
 	"",
@@ -1598,7 +1600,7 @@ function CraftsWorkspace({ accountId, profiles, profileError, onAccountChange, o
 			}}
 		>
 			<Stack spacing={3}>
-                <Alert severity="info">Select an account to verify active crafting levels and recipe unlocks. Eligible results use fresh bank/material stock, exclude reservations, and value consumed stock at resale prices. Daily-limited and unsupported crafting routes are excluded. Older recipe caches need Sync Recipes.</Alert>
+                <Alert severity="info">Select an account to verify active crafting levels and recipe unlocks. Eligible results use fresh synced inventory, exclude reservations, and value consumed stock at resale prices. Daily-limited and unsupported crafting routes are excluded. Older recipe caches need Sync Recipes.</Alert>
 				<Box>
 					<Typography
 						variant="h4"
@@ -1743,6 +1745,7 @@ function CraftsWorkspace({ accountId, profiles, profileError, onAccountChange, o
 				</Paper>
 
                 {accountId && <AccountCraftingPanel accountId={accountId} onChanged={() => onAccountSynced(accountId)} />}
+                <BatchRecommendationsPanel key={accountId} accountId={accountId} accountName={profiles.find(profile => profile.id === accountId)?.display_name ?? "Market estimates"} />
 
 				<Paper
 					elevation={2}
@@ -2382,6 +2385,9 @@ function CraftsWorkspace({ accountId, profiles, profileError, onAccountChange, o
 								</Button>
 							</Stack>
 
+                            <ItemReferenceLinks itemId={selectedItem.item_id} name={selectedItem.name}
+                                quantity={selectedItem.output_item_count ?? 1} />
+
 							<Paper
 								variant="outlined"
 								sx={{
@@ -2555,7 +2561,7 @@ function CraftsWorkspace({ accountId, profiles, profileError, onAccountChange, o
 							<Divider />
 
 							<CraftPlanPanel key={`${selectedItem.item_id}:${selectedItem.snapshot_id}:${materialPricing}:${outputPricing}`}
-                                itemId={selectedItem.item_id} recipeId={selectedItem.recipe_id} accountId={accountId}
+                                itemId={selectedItem.item_id} itemName={selectedItem.name} recipeId={selectedItem.recipe_id} accountId={accountId}
                                 accountName={profiles.find(profile => profile.id === accountId)?.display_name ?? "Market estimates"}
                                 materialPricing={materialPricing} outputPricing={outputPricing} eligibleOnly={eligibleOnly} />
 
@@ -2810,7 +2816,9 @@ function CraftsWorkspace({ accountId, profiles, profileError, onAccountChange, o
 										<TableBody>
 											{selectedItem.ingredients?.map((ingredient) => (
 												<TableRow key={ingredient.item_id} hover sx={zebraRowSx}>
-													<TableCell>{ingredient.name}</TableCell>
+													<TableCell><Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+                                                    <span>{ingredient.name}</span><ItemMarketLink itemId={ingredient.item_id} name={ingredient.name} />
+                                                </Stack></TableCell>
 													<TableCell align="right">{formatNumber(ingredient.count)}</TableCell>
 													<TableCell align="right">{formatNumber(ingredient.owned_count)}</TableCell>
 													<TableCell
