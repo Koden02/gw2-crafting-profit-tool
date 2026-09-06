@@ -1,16 +1,19 @@
 import { useEffect, useState } from "react"
 import { Alert, Box, Button, CircularProgress, Divider, MenuItem, Stack, Table, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from "@mui/material"
 import { fetchCraftPlan, type CraftPlan, type MaterialPricingMode, type OutputPricingMode } from "../api/profitableCrafts"
-import { formatCoins, formatDateTime } from "../utils/formatting"
+import { formatCoins, formatDateTime, formatInventoryLocation } from "../utils/formatting"
+import { RecordCraftResult } from "./CraftRunResults"
+import ItemReferenceLinks, { ItemMarketLink } from "./ItemReferenceLinks"
 
-export default function CraftPlanPanel({ itemId, recipeId, accountId, accountName, materialPricing, outputPricing, eligibleOnly }: {
-    itemId: number; recipeId: number; accountId: string; accountName: string; materialPricing: MaterialPricingMode; outputPricing: OutputPricingMode; eligibleOnly: boolean
+export default function CraftPlanPanel({ itemId, itemName, recipeId, accountId, accountName, materialPricing, outputPricing, eligibleOnly, initialQuantity = 1, initialBudget = "", initialCheckDepth = false }: {
+    itemId: number; itemName: string; recipeId: number; accountId: string; accountName: string; materialPricing: MaterialPricingMode; outputPricing: OutputPricingMode; eligibleOnly: boolean
+    initialQuantity?: number; initialBudget?: string; initialCheckDepth?: boolean
 }) {
-    const [quantity, setQuantity] = useState(1)
-    const [budget, setBudget] = useState("")
+    const [quantity, setQuantity] = useState(initialQuantity)
+    const [budget, setBudget] = useState(initialBudget)
     const [liquidation, setLiquidation] = useState<OutputPricingMode>(outputPricing)
     const [revision, setRevision] = useState(0)
-    const [checkDepth, setCheckDepth] = useState(false)
+    const [checkDepth, setCheckDepth] = useState(initialCheckDepth)
     const [plan, setPlan] = useState<CraftPlan | null>(null)
     const [error, setError] = useState<string | null>(null)
     const [loading, setLoading] = useState(true)
@@ -46,7 +49,7 @@ export default function CraftPlanPanel({ itemId, recipeId, accountId, accountNam
             `Materials: ${materialPricing === "buy" ? "buy orders" : "instant buy"}; output: ${outputPricing === "buy" ? "instant sell" : "list sell"}; owned liquidation: ${liquidation === "buy" ? "instant sell" : "list sell"}`,
             `Purchases: ${formatCoins(plan.purchase_cost)}; upfront gold: ${formatCoins(plan.additional_gold_needed)}; gain vs selling owned stock: ${formatCoins(plan.economic_gain)}`,
             "Buy:", ...plan.purchases.map(row => `${row.quantity} ${row.name}: ${formatCoins(row.cost)}`),
-            "Use owned:", ...plan.consumed.map(row => `${row.quantity} ${row.name}`),
+            "Use owned:", ...plan.consumed.map(row => `${row.quantity} ${row.name}${row.locations?.length ? `: ${row.locations.map(location => `${location.quantity} from ${formatInventoryLocation(location.source, location.position)}`).join("; ")}` : ""}`),
             "Craft in order:", ...plan.steps.map(row => `${row.runs} runs of recipe ${row.recipe_id}: ${row.produced} ${row.name}; crafter ${row.crafter || "unverified"}, recipe ${row.recipe_state}`),
             "Leftovers:", ...plan.leftovers.map(row => `${row.quantity} ${row.name}`),
             `Eligibility: ${plan.eligibility}; reservation revision: ${plan.reservation_revision ?? "none"}`,
@@ -71,6 +74,8 @@ export default function CraftPlanPanel({ itemId, recipeId, accountId, accountNam
             <Button onClick={() => { setPlan(null); setLoading(true); setCheckDepth(true); setRevision(v => v + 1) }} disabled={loading}>Refresh and check depth</Button>
             <Button onClick={() => void copyPlan()} disabled={!plan || loading}>Copy plan</Button>
         </Stack>
+        <ItemReferenceLinks itemId={itemId} name={itemName}
+            quantity={plan && !loading && plan.planned_quantity > 0 ? plan.planned_quantity : quantity} />
         {loading && <CircularProgress size={24} />}
         {error && <Alert severity="error">{error}</Alert>}
         {message && <Typography>{message}</Typography>}
@@ -85,14 +90,21 @@ export default function CraftPlanPanel({ itemId, recipeId, accountId, accountNam
             </Stack>
             {plan.issues.map(issue => <Alert key={issue} severity="warning" sx={{ mb: 1 }}>{issue}</Alert>)}
             <Table size="small"><TableHead><TableRow><TableCell>Buy</TableCell><TableCell>Quantity</TableCell><TableCell>Cost</TableCell></TableRow></TableHead>
-                <TableBody>{plan.purchases.map(row => <TableRow key={row.item_id}><TableCell>{row.name}</TableCell><TableCell>{row.quantity}</TableCell><TableCell>{formatCoins(row.cost)}</TableCell></TableRow>)}</TableBody>
+                <TableBody>{plan.purchases.map(row => <TableRow key={row.item_id}>
+                    <TableCell><Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+                        <span>{row.name}</span><ItemMarketLink itemId={row.item_id} name={row.name} />
+                    </Stack></TableCell>
+                    <TableCell>{row.quantity}</TableCell><TableCell>{formatCoins(row.cost)}</TableCell>
+                </TableRow>)}</TableBody>
             </Table>
             <Typography sx={{ mt: 2 }}>Use owned: {plan.consumed.map(row => `${row.quantity} ${row.name}`).join(", ") || "None"}</Typography>
+            {plan.consumed.map(row => row.locations?.length ? <Typography key={row.item_id} variant="body2">Gather {row.name}: {row.locations.map(location => `${location.quantity} from ${formatInventoryLocation(location.source, location.position)}`).join("; ")}</Typography> : null)}
             <Typography sx={{ mt: 1 }}>Craft in order:</Typography>
             {plan.steps.map((row, index) => <Typography key={index} variant="body2">{row.runs} runs of recipe {row.recipe_id}: {row.produced} {row.name} — {row.crafter ? `${row.crafter} (${row.recipe_state})` : `crafter ${row.eligibility}`}</Typography>)}
             <Typography sx={{ mt: 1 }}>Reserved, not used: {plan.reserved.map(row => `${row.quantity} ${row.name}`).join(", ") || "None affecting this plan"}</Typography>
             <Typography sx={{ mt: 1 }}>Leftovers: {plan.leftovers.map(row => `${row.quantity} ${row.name}`).join(", ") || "None"}</Typography>
             <Typography variant="caption">{plan.fee_model} {plan.allocation_policy}</Typography>
+            {plan.account_id && plan.status === "quoted" && <RecordCraftResult key={plan.observed_at} plan={plan} />}
         </>}
         <Divider sx={{ my: 2 }} />
     </Box>

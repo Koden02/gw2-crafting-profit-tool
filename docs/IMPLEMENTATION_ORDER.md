@@ -14,7 +14,7 @@ The goals are to:
 
 This file acts as the **source of truth for development priorities**.
 
-September 2026 reconciliation: the account-isolation and reliable-quote prerequisite is implemented; see [contracts, limitations and acceptance tests](ACCOUNT_QUOTES.md). Verified account crafting eligibility and reservations are also implemented for direct API data and bank/material storage; broader inventory/import support remains next. The older phases below are historical sequencing, not proof of current completeness.
+September 2026 reconciliation: account isolation, reliable quotes, crafting eligibility and reservations are implemented; see [contracts and acceptance tests](ACCOUNT_QUOTES.md). Direct API inventory now includes bank, materials, shared slots and character bags. [Budgeted crafting batches](CRAFT_BATCHES.md) add bounded quantity suggestions and completed-result comparison. Real account sync and live batch search are validated; a completed craft and sale remain pending. The older phases below are historical sequencing, not proof of current completeness.
 
 ---
 
@@ -485,7 +485,7 @@ This section preserves the original expansion sequence. Several features are alr
 
 ## Inventory-Aware Crafting
 
-Status: Partial. Selected-account bank/material allocation, backend shopping plans, active character/recipe eligibility, simple reservations and economic table ranking are implemented. Other inventory sources, imports, full cooldown/non-TP support and automatic quantity suggestions remain.
+Status: Direct API milestone implemented and real account sync validated. Selected-account bank/material/shared/character allocation, backend shopping plans, active character/recipe eligibility, reservations, economic ranking and bounded quantity suggestions are implemented. A completed craft/sale, imports, full cooldown/non-TP support and combined multi-craft allocation remain.
 
 Use GW2 account API keys to analyze owned materials.
 
@@ -705,19 +705,17 @@ analytics views
 
 # Immediate Next Development Task
 
-Validate the local upgrade and real account sync, then **expand inventory coverage
-through the common account-data model**.
+Validate **one small real crafting batch** using the implemented direct API workflow.
 
-The selected-account eligible-crafts milestone is implemented for direct API crafting
-levels/unlocks, bank/material storage and simple reservations. Craft-versus-sell,
-history/charts and backend shopping plans already exist.
+1. Sync an explicitly selected account with account, inventories, characters and
+   unlocks permissions; confirm fresh inventory and the expected named crafters.
+2. Refresh prices, enter a modest gold budget, and find a qualifying batch.
+   Review and refresh its plan before trading.
+3. Gather and buy the listed materials, craft with the named characters, sell the
+   complete output, and record actual purchases and net sales after both fees.
+4. Compare the result with the estimate, then resync inventory before another batch.
 
-1. Validate startup migrations, refresh public recipes/prices, and use an account key
-   with account, inventories, characters and unlocks scopes to check real coverage.
-2. Add shared/character inventory adapters with source replacement and binding rules.
-3. Add JSON import after resolving explicit identity association and obtaining a real
-   export with recipe IDs. Prove API/import parity and no overlapping inventory counts.
-
-Quantity suggestions, complete time-gate allowances, non-TP acquisition and multi-craft
-allocation are later work. See [current contracts and acceptance tests](ACCOUNT_QUOTES.md).
-Keep packaging, unrelated UI redesign and additional analytics outside this milestone.
+See [batch limits and validation](CRAFT_BATCHES.md). JSON import requires explicit
+identity association and a representative export with recipe IDs. Complete time-gate
+allowances, non-TP acquisition, combined multi-craft allocation and packaging remain
+separate future work.

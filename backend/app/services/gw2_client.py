@@ -69,6 +69,12 @@ class GW2Client:
 	def fetch_account_bank(self, api_key: str) -> list[dict[str, Any] | None]:
 		return self._get("/v2/account/bank", headers=self._auth_headers(api_key))
 
+	def fetch_shared_inventory(self, api_key: str) -> list[dict[str, Any] | None]:
+		return self._get("/v2/account/inventory", headers=self._auth_headers(api_key))
+
+	def fetch_character_inventory(self, api_key: str, name: str) -> dict:
+		return self._get(f"/v2/characters/{quote(name, safe='')}/inventory", headers=self._auth_headers(api_key))
+
 	def fetch_character_names(self, api_key: str) -> list[str]:
 		return self._get("/v2/characters", headers=self._auth_headers(api_key))
 

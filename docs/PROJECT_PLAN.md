@@ -5,8 +5,10 @@
 Answer what the selected account can craft profitably, what to buy, how much to craft,
 and whether crafting beats selling its materials, accounting for reservations and
 budget. Account isolation and reliable quantity quotes now provide the prerequisite;
-crafting eligibility, simple reservations and account-aware ranking are implemented
-for direct API data and bank/material stock. Broader inventory/import support remains next. See
+crafting eligibility, reservations, account-aware ranking and bounded batch suggestions
+are implemented for direct API data across bank, materials, shared slots and character bags.
+Real account sync and live batch search are validated; the next practical check is a small completed craft and sale;
+JSON import remains future work. See [crafting batches](CRAFT_BATCHES.md),
 [the current roadmap](IMPLEMENTATION_ORDER.md) and [account quote contracts](ACCOUNT_QUOTES.md).
 The remaining sections preserve the original broader project plan.
 

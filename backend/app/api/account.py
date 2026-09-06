@@ -13,6 +13,7 @@ from app.services.price_history_service import normalize_datetime
 from app.models import AccountCrafting, MaterialReservation, Item
 from app.services.crafting_eligibility import fresh
 from app.services.reservation_service import set_reservation
+from app.services.inventory_coverage import inventory_coverage
 
 router = APIRouter(prefix="/api/account", tags=["account"])
 
@@ -21,6 +22,7 @@ class AccountSyncRequest(BaseModel):
 	api_key: str = Field(min_length=1)
 	account_id: str | None = None
 	include_crafting: bool = True
+	include_inventory: bool = True
 
 
 @router.post("/sync/holdings")
@@ -36,7 +38,7 @@ def sync_account_holdings(
 	service = AccountService(db)
 
 	try:
-		return service.sync_holdings(api_key, payload.account_id, payload.include_crafting)
+		return service.sync_holdings(api_key, payload.account_id, payload.include_crafting, payload.include_inventory)
 	except AccountMismatch as exc:
 		raise HTTPException(status_code=409, detail=str(exc)) from exc
 	except ValueError as exc:
@@ -49,7 +51,7 @@ def sync_account_holdings(
 		if status_code in {401, 403}:
 			raise HTTPException(
 				status_code=401,
-				detail="GW2 API key was rejected. Use a key with account and inventories permissions.",
+				detail="GW2 API key was rejected. Use a key with account, inventories, characters and unlocks permissions.",
 			) from exc
 
 		if status_code == 429:
@@ -78,6 +80,7 @@ def get_account_holdings_status(account_id: str, db: Session = Depends(get_db)) 
 		"reservation_revision": profile.reservation_revision,
 		"source": profile.source,
 		"coverage": profile.coverage,
+		"inventory_coverage": inventory_coverage(profile),
 		"holding_count": holding_count,
 		"total_owned": total_owned,
 		"last_updated": last_updated,
@@ -101,7 +104,7 @@ def get_profiles(db: Session = Depends(get_db)) -> list[dict]:
 
 @router.get("/crafting")
 def get_crafting_status(account_id: str, db: Session = Depends(get_db)) -> dict:
-    require_account(db, account_id)
+    profile = require_account(db, account_id)
     row = db.get(AccountCrafting, account_id)
     payload = json.loads(row.payload) if row else {}
     def summary(source):
@@ -109,6 +112,7 @@ def get_crafting_status(account_id: str, db: Session = Depends(get_db)) -> dict:
                     fetched_at=source.get("fetched_at"), error=source.get("error"),
                     count=len(source.get("data", [])))
     return dict(account_id=account_id, snapshot_id=row.snapshot_id if row else None,
+        inventory_coverage=inventory_coverage(profile),
         characters_source=summary(payload.get("characters", {})),
         account_recipes_source=summary(payload.get("account_recipes", {})),
         characters=[dict(name=name, crafting=summary(data.get("crafting", {})),

@@ -2,13 +2,15 @@
 
 Implemented local milestones, September 2026. The existing SQLite, SQLAlchemy,
 FastAPI and React architecture now supports selected-account eligible crafting
-plans using bank/material storage, direct API capabilities and simple reservations.
+plans using bank, material storage, shared slots, character bags, direct API
+capabilities and simple reservations. [Crafting batches](CRAFT_BATCHES.md) adds
+budgeted quantity suggestions and completed-result comparison.
 Market estimates remain available without enforcing account eligibility.
 
 ## Updating an existing installation
 
 1. Pause automatic price sync in **Options**, let any active sync finish, and back up
-   the SQLite database. Restart the backend to run the transactional, versioned migration.
+   the SQLite database locally, outside Git. Restart the backend to run the transactional, versioned migration.
 2. Run **Sync Recipes** once, wait for completion, then run **Sync Prices** and wait
    for it to finish. Older recipes are marked incomplete
    until refreshed because their cached ingredients may omit currency/guild costs.
@@ -47,16 +49,21 @@ source/position, item, quantity, binding and character binding. `AccountHolding`
 contains account/item aggregates and a separate usable count.
 
 `InventorySnapshot` is the adapter boundary for later import support. The current
-adapter fetches and validates both bank and material storage before replacing only
-the selected account's snapshot in one transaction. Failed, malformed, partial or
-older bank/material refreshes preserve the previous snapshot. Writers serialize before comparing
+adapter fetches and validates bank, material storage, shared slots, the character
+roster and every character inventory before replacing only the selected account's
+snapshot in one transaction. Failed, malformed or older required inventory reads
+preserve the previous snapshot. An explicit `include_inventory=false` legacy refresh
+updates bank/material storage only; other sources retain their original timestamps
+and cannot become fresh merely because those two sources were refreshed.
+Writers serialize before comparing
 snapshot times, so an older concurrent request cannot overwrite a newer result. Quote reads obtain the profile and holdings together so a refresh cannot mix stock with the wrong snapshot ID.
 Source timestamps describe a collection interval; separate GW2 endpoints are not an
 atomic view of an account while items are moving.
 
-Only unbound bank/material stacks with usable public item definitions are allocated.
-Shared inventory, character inventories and equipped items are not imported. Bound
-stock is preserved but excluded from usable inventory. Crafting capabilities are a
+Only unbound inventory stacks with usable public item definitions are allocated.
+Equipped items, bag containers and embedded upgrades are not added to inventory.
+Physical source positions are retained for gathering instructions. Bound stock is
+preserved but excluded from usable inventory. Crafting capabilities are a
 separate part of the account snapshot and do not add inventory counts. Reservations
 survive refreshes, subtract once before allocation and clamp available stock at zero.
 A reservation can exceed present stock for a future goal; zero releases it.
@@ -65,6 +72,9 @@ Migration version 2 adds capability/reservation tables and a reservation revisio
 existing profiles. Optimistic revision checks reject conflicting reservation saves
 with HTTP 409. Quotes read capabilities, stock and reservations under a checked
 (snapshot ID, reservation revision) pair, retrying boundedly if it changes.
+Migration version 3 adds shared-slot and character-bag aggregate columns without
+rebuilding holdings or public caches. A full account sync populates the new sources;
+an existing bank/material snapshot alone cannot qualify for batch suggestions.
 
 ## Crafting eligibility contract
 
@@ -72,7 +82,7 @@ The API adapter reads the character roster, each character's crafting ratings an
 active disciplines, each character's usable recipe IDs, and account-wide recipe
 unlocks. Every source records status and observation time. Missing/malformed/failed
 capability reads preserve their last successful payload but invalidate that source
-as proof, even if its timestamp is recent. A complete bank/material refresh can still
+as proof, even if its timestamp is recent. A complete inventory refresh can still
 succeed when capability reads fail. Dropped characters disappear after a fresh roster
 replacement. Keys are never included in stored error messages.
 
@@ -161,7 +171,8 @@ may change rounding. Quotes and copied plans disclose this approximation.
 Allocation uses owned stock first, then deterministic local buy/craft choices scored
 by purchases plus consumed stock's liquidation value. It is a bounded single-output
 planner, not a global optimizer across batches, recipes, crafts or budgets. A budget
-checks the entered quantity's upfront funding; it does not choose an optimal quantity.
+checks the entered quantity's upfront funding. The separate [batch search](CRAFT_BATCHES.md)
+compares whole quantities in a bounded candidate shortlist using this same planner.
 Search is capped at 5,000 expansions and 40 nested item paths. Exhausted searches
 produce an unavailable quote rather than claiming an optimum.
 
@@ -189,9 +200,11 @@ unchanged by this milestone.
 
 - `GET /api/account/profiles`: selectable profiles and unverified legacy metadata.
 - `POST /api/account/sync/holdings`: `api_key`, optional expected `account_id`,
-  `include_crafting` (defaults true for API callers).
+  `include_crafting` and `include_inventory` (both default true for API callers).
 - `GET /api/account/holdings/status?account_id=...`: scoped status and snapshot ID.
 - `GET /api/account/crafting?account_id=...`: source freshness and character coverage.
+- `POST /api/craft-recommendations`: selected account, budget, minimum gain and output cap;
+  returns independent live-depth plans. See [the search contract](CRAFT_BATCHES.md).
 - `GET /api/account/materials?account_id=...`: owned/reserved material search.
 - `PUT /api/account/reservations/{item_id}?account_id=...`: quantity, optional purpose,
   and `expected_revision`; conflicting writes return 409.
@@ -218,7 +231,8 @@ The regression suite covers the prerequisite quote/migration contracts and:
 | Shared stock is consumed once after reservations, over-reservations clamp to zero, conflicting saves fail | shared-reservations and concurrent-private-read tests |
 | Refreshes preserve reservations; v1/v2 and unknown-owner migrations are safe and repeatable | partial-capability refresh, v2 migration, existing legacy migration/rollback tests |
 
-Run `python -m pytest tests -q -p no:cacheprovider` from `backend`, plus frontend
+The eligibility/reservations milestone was validated before the later batch work:
+run `python -m pytest tests -q -p no:cacheprovider` from `backend`, plus frontend
 `npm run lint` and `npm run build`. **91 backend tests passed**; frontend lint and
 production build passed. The browser smoke used a separate three-account fixture
 database and mocked remote reads: account-specific recipe selection and crafter
@@ -238,20 +252,21 @@ unchanged by the migration. A live public refresh subsequently updated 13,183 re
 and 27,987 prices. History maintenance completed, and full-cache market table and
 shopping-plan profit values reconciled. A concurrent recipe refresh initially hit
 SQLite's lock during the large history cleanup; retrying sequentially succeeded.
-Authenticated account coverage requires the separate user-triggered account sync.
+The later user-triggered account sync succeeded after fixing repeated material
+catalog entries; see [live inventory and batch validation](CRAFT_BATCHES.md).
 
 ## Remaining scope and next milestone
 
-First validate the local upgrade with a recipe/price refresh and a real account data
-sync. Then extend **inventory coverage through the common account-data model**:
+Shared/character inventory and bounded quantity suggestions are implemented; see
+[crafting batch contracts and validation](CRAFT_BATCHES.md). Real account inventory,
+crafting coverage and live batch search have been validated. The next practical check
+is one small completed crafting batch, comparing recorded purchases and net sales
+with its quote. Successful market fills and realized profit remain unverified.
 
-1. Add shared/character inventory sources with location/binding-aware whole-source
-   replacement. Never count equipped items or overlapping summaries twice.
-2. Add the JSON adapter with explicit identity association and source freshness.
-   Parity tests must show equivalent API/import inputs produce identical usable stock
-   and capabilities, without merging duplicate physical stacks.
-3. Only after coverage is trustworthy, add bounded quantity suggestions with budgets
-   and both-sided depth. A multi-craft basket will need its own shared allocation.
+JSON import remains separate work. It needs explicit identity association, source
+freshness, and parity tests showing equivalent API/import inputs produce identical
+usable stock and capabilities without merging duplicate physical stacks.
+A multi-craft basket will need its own shared allocation.
 
 The inspected Account JSON creator v3.1.1 and its real schema 3.0 export provide
 location-aware inventory, binding and coverage information, but the sample omits a

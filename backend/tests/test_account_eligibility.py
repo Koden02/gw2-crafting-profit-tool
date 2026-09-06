@@ -264,7 +264,7 @@ def test_v2_migration_preserves_existing_profile(tmp_path):
     migrate(engine)
     with engine.connect() as db:
         assert db.execute(text("SELECT display_name, snapshot_id, reservation_revision FROM account_profiles")).one() == ("Keep name", "old", 0)
-        assert db.execute(text("SELECT count(*) FROM schema_migrations")).scalar() == 2
+        assert db.execute(text("SELECT count(*) FROM schema_migrations")).scalar() == 3
     assert "account_crafting" in inspect(engine).get_table_names()
     engine.dispose()
 

@@ -23,6 +23,7 @@ htmlcov/
 
 # dotenv
 .env
+.env.*.local
 
 # ---------------------------
 # Node / React
@@ -45,6 +46,10 @@ yarn-error.log*
 
 *.sqlite
 *.sqlite3
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+/data/backups/
 
 # keep data folder but ignore DB files
 data/*.sqlite
