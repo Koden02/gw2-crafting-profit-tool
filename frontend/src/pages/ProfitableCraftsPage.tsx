@@ -25,7 +25,10 @@ import {
 
 import {
 	fetchAccountHoldingsStatus,
+	fetchAccountProfiles,
+	type AccountProfile,
 	fetchListingDepth,
+	fetchPriceHistory,
 	fetchProfitDetail,
 	fetchProfitScenarios,
 	fetchProfitableCrafts,
@@ -38,11 +41,15 @@ import {
 	type ListingDepthAnalysis,
 	type MaterialPricingMode,
 	type OutputPricingMode,
+	type PriceHistoryResponse,
 	type ProfitScenario,
 	type ProfitableCraft,
 	type SyncStatus,
 } from "../api/profitableCrafts"
 import { formatCoins, formatDateTime, formatNumber, formatPercent } from "../utils/formatting"
+
+import CraftPlanPanel from "../components/CraftPlanPanel"
+import AccountCraftingPanel from "../components/AccountCraftingPanel"
 
 const disciplineOptions = [
 	"",
@@ -63,10 +70,10 @@ const tableHeaderBackground = "#f1e2cb"
 const tableStripeBackground = "rgba(165, 111, 44, 0.055)"
 const tableHoverBackground = "rgba(165, 111, 44, 0.14)"
 const priceDataStaleAfterMs = 60 * 60 * 1000
-const accountApiKeyStorageKey = "gw2-profit-api-key"
 const watchlistStorageKey = "gw2-profit-watchlist"
 const filterPresetsStorageKey = "gw2-profit-filter-presets"
 const tableDepthLoadLimit = 25
+const priceHistoryRangeOptions = [1, 7, 30, 90, 365]
 
 type SavedFilterSettings = {
 	limit: number
@@ -75,6 +82,7 @@ type SavedFilterSettings = {
 	minSellQuantity: number
 	excludeLowLiquidity: boolean
 	excludeSuspiciousSpread: boolean
+	excludeStalledMarkets: boolean
 	discipline: string
 	itemNameSearch: string
 	materialPricing: MaterialPricingMode
@@ -131,8 +139,8 @@ const compactMetricSx = {
 	p: 1.25,
 }
 
-function listingDepthCacheKey(itemId: number, materialPricing: MaterialPricingMode): string {
-	return `${itemId}:${materialPricing}`
+function listingDepthCacheKey(itemId: number, materialPricing: MaterialPricingMode, outputPricing: OutputPricingMode): string {
+	return `${itemId}:${materialPricing}:${outputPricing}`
 }
 
 function formatAge(valueMs: number): string {
@@ -156,40 +164,17 @@ function formatAge(valueMs: number): string {
 	return `${hours} hour${hours === 1 ? "" : "s"} ${minutes} minute${minutes === 1 ? "" : "s"}`
 }
 
-function loadSavedAccountApiKey(): string {
-	if (typeof window === "undefined") {
-		return ""
-	}
-
-	return window.localStorage.getItem(accountApiKeyStorageKey) ?? ""
-}
-
-function saveAccountApiKey(apiKey: string): void {
-	if (typeof window === "undefined") {
-		return
-	}
-
-	const trimmedKey = apiKey.trim()
-
-	if (trimmedKey) {
-		window.localStorage.setItem(accountApiKeyStorageKey, trimmedKey)
-		return
-	}
-
-	window.localStorage.removeItem(accountApiKeyStorageKey)
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null
 }
 
-function loadSavedWatchlistIds(): number[] {
+function loadSavedWatchlistIds(accountId: string): number[] {
 	if (typeof window === "undefined") {
 		return []
 	}
 
 	try {
-		const parsed: unknown = JSON.parse(window.localStorage.getItem(watchlistStorageKey) ?? "[]")
+		const parsed: unknown = JSON.parse(window.localStorage.getItem(`${watchlistStorageKey}:${accountId || "market"}`) ?? (accountId ? null : window.localStorage.getItem(watchlistStorageKey)) ?? "[]")
 
 		if (!Array.isArray(parsed)) {
 			return []
@@ -201,12 +186,12 @@ function loadSavedWatchlistIds(): number[] {
 	}
 }
 
-function saveWatchlistIds(itemIds: number[]): void {
+function saveWatchlistIds(itemIds: number[], accountId: string): void {
 	if (typeof window === "undefined") {
 		return
 	}
 
-	window.localStorage.setItem(watchlistStorageKey, JSON.stringify(itemIds))
+	window.localStorage.setItem(`${watchlistStorageKey}:${accountId || "market"}`, JSON.stringify(itemIds))
 }
 
 function isMaterialPricingMode(value: unknown): value is MaterialPricingMode {
@@ -233,6 +218,7 @@ function normalizeFilterSettings(value: unknown): SavedFilterSettings | null {
 		excludeLowLiquidity: typeof value.excludeLowLiquidity === "boolean" ? value.excludeLowLiquidity : true,
 		excludeSuspiciousSpread:
 			typeof value.excludeSuspiciousSpread === "boolean" ? value.excludeSuspiciousSpread : true,
+		excludeStalledMarkets: typeof value.excludeStalledMarkets === "boolean" ? value.excludeStalledMarkets : true,
 		discipline: typeof value.discipline === "string" ? value.discipline : "",
 		itemNameSearch: typeof value.itemNameSearch === "string" ? value.itemNameSearch : "",
 		materialPricing,
@@ -241,13 +227,13 @@ function normalizeFilterSettings(value: unknown): SavedFilterSettings | null {
 	}
 }
 
-function loadSavedFilterPresets(): SavedFilterPreset[] {
+function loadSavedFilterPresets(accountId: string): SavedFilterPreset[] {
 	if (typeof window === "undefined") {
 		return []
 	}
 
 	try {
-		const parsed: unknown = JSON.parse(window.localStorage.getItem(filterPresetsStorageKey) ?? "[]")
+		const parsed: unknown = JSON.parse(window.localStorage.getItem(`${filterPresetsStorageKey}:${accountId || "market"}`) ?? (accountId ? null : window.localStorage.getItem(filterPresetsStorageKey)) ?? "[]")
 
 		if (!Array.isArray(parsed)) {
 			return []
@@ -271,49 +257,12 @@ function loadSavedFilterPresets(): SavedFilterPreset[] {
 	}
 }
 
-function saveFilterPresets(presets: SavedFilterPreset[]): void {
+function saveFilterPresets(presets: SavedFilterPreset[], accountId: string): void {
 	if (typeof window === "undefined") {
 		return
 	}
 
-	window.localStorage.setItem(filterPresetsStorageKey, JSON.stringify(presets))
-}
-
-function buildShoppingListCopyText(itemName: string, plan: Omit<ShoppingPlan, "copyText">): string {
-	const missingRows = plan.rows.filter((row) => row.missingCount > 0)
-	const lines = [
-		`${itemName} batch plan`,
-		`Requested output: ${formatNumber(plan.requestedOutputCount)}`,
-		`Recipe runs: ${formatNumber(plan.recipeRuns)}`,
-		`Planned output: ${formatNumber(plan.plannedOutputCount)}`,
-		`Market profit: ${formatCoins(plan.marketProfit)}`,
-		`Out-of-pocket cost: ${formatCoins(plan.outOfPocketCost)}`,
-		`Out-of-pocket profit: ${formatCoins(plan.outOfPocketProfit)}`,
-		`Owned coverage: ${formatPercent(plan.ownedCoverageRatio)}`,
-	]
-
-	if (plan.plannedExceedsInstantSellDepth && plan.instantSellDepthLimit !== null) {
-		lines.push(
-			`Depth warning: planned output exceeds profitable instant-sell depth of ${formatNumber(plan.instantSellDepthLimit)}.`,
-		)
-	}
-
-	lines.push("", "Missing direct ingredients:")
-
-	if (missingRows.length === 0) {
-		lines.push("None")
-		return lines.join("\n")
-	}
-
-	for (const row of missingRows) {
-		const cost = row.missingBuyCost === null ? "price unavailable" : formatCoins(row.missingBuyCost)
-		lines.push(
-			`${formatNumber(row.missingCount)} ${row.name} ` +
-				`(required ${formatNumber(row.requiredCount)}, owned ${formatNumber(row.ownedCount)}, ${cost})`,
-		)
-	}
-
-	return lines.join("\n")
+	window.localStorage.setItem(`${filterPresetsStorageKey}:${accountId || "market"}`, JSON.stringify(presets))
 }
 
 type SortKey =
@@ -327,44 +276,378 @@ type SortKey =
 	| "recommendation"
 	| "profit"
 	| "roi"
+	| "market_flow_score"
 	| "buy_quantity"
 	| "sell_quantity"
 
 type SortDirection = "asc" | "desc"
 type SyncDataset = "prices" | "items" | "recipes"
 
-type ShoppingListRow = {
-	itemId: number
-	name: string
-	requiredCount: number
-	ownedCount: number
-	ownedAppliedCount: number
-	missingCount: number
-	unitBuyPrice: number | null
-	missingBuyCost: number | null
+type PriceHistoryChartPoint = {
+	observedAt: string
+	time: number
+	buyPrice: number | null
+	buyMin: number | null
+	buyMax: number | null
+	sellPrice: number | null
+	sellMin: number | null
+	sellMax: number | null
 }
 
-type ShoppingPlan = {
-	requestedOutputCount: number
-	recipeRuns: number
-	plannedOutputCount: number
-	totalCraftCost: number
-	totalNetSale: number
-	marketProfit: number
-	outOfPocketCost: number
-	outOfPocketProfit: number
-	requiredIngredientCount: number
-	ownedAppliedCount: number
-	ownedCoverageRatio: number
-	missingBuyCost: number
-	hasUnavailablePrices: boolean
-	instantSellDepthLimit: number | null
-	plannedExceedsInstantSellDepth: boolean
-	rows: ShoppingListRow[]
-	copyText: string
+function isFiniteNumber(value: number | null | undefined): value is number {
+	return typeof value === "number" && Number.isFinite(value)
+}
+
+function priceHistoryResolutionLabel(resolution: PriceHistoryResponse["resolution"]): string {
+	if (resolution === "raw") {
+		return "Raw snapshots"
+	}
+
+	if (resolution === "hour") {
+		return "Hourly rollup"
+	}
+
+	return "Daily rollup"
+}
+
+function formatChartTimestamp(value: number): string {
+	const date = new Date(value)
+
+	if (Number.isNaN(date.getTime())) {
+		return "-"
+	}
+
+	return date.toLocaleString(undefined, {
+		month: "short",
+		day: "numeric",
+		hour: "numeric",
+	})
+}
+
+function PriceHistoryChart({
+	history,
+	onSyncPrices,
+	syncingPrices,
+	syncDisabled,
+}: {
+	history: PriceHistoryResponse
+	onSyncPrices: () => void
+	syncingPrices: boolean
+	syncDisabled: boolean
+}) {
+	const chartPoints: PriceHistoryChartPoint[] = history.points
+		.map((point) => ({
+			observedAt: point.observed_at,
+			time: new Date(point.observed_at).getTime(),
+			buyPrice: point.buy_price,
+			buyMin: point.buy_price_min,
+			buyMax: point.buy_price_max,
+			sellPrice: point.sell_price,
+			sellMin: point.sell_price_min,
+			sellMax: point.sell_price_max,
+		}))
+		.filter((point) => Number.isFinite(point.time) && (isFiniteNumber(point.buyPrice) || isFiniteNumber(point.sellPrice)))
+
+	if (chartPoints.length === 0) {
+		return (
+			<Alert
+				severity="info"
+				action={
+					<Button
+						color="inherit"
+						disabled={syncDisabled}
+						onClick={onSyncPrices}
+						size="small"
+					>
+						{syncingPrices ? (
+							<Stack direction="row" spacing={0.75} alignItems="center">
+								<CircularProgress color="inherit" size={14} />
+								<span>Syncing</span>
+							</Stack>
+						) : (
+							"Sync Prices"
+						)}
+					</Button>
+				}
+			>
+				No local price history has been recorded for this item in the selected range.
+			</Alert>
+		)
+	}
+
+	const priceValues = chartPoints
+		.flatMap((point) => [
+			point.buyPrice,
+			point.buyMin,
+			point.buyMax,
+			point.sellPrice,
+			point.sellMin,
+			point.sellMax,
+		])
+		.filter(isFiniteNumber)
+	const minPrice = Math.min(...priceValues)
+	const maxPrice = Math.max(...priceValues)
+	const priceSpan = Math.max(1, maxPrice - minPrice)
+	const yMin = Math.max(0, minPrice - priceSpan * 0.08)
+	const yMax = maxPrice + priceSpan * 0.08
+	const xMin = Math.min(...chartPoints.map((point) => point.time))
+	const xMax = Math.max(...chartPoints.map((point) => point.time))
+	const xSpan = Math.max(1, xMax - xMin)
+	const lastPoint = [...chartPoints].reverse().find(
+		(point) => isFiniteNumber(point.buyPrice) || isFiniteNumber(point.sellPrice),
+	)
+	const width = 640
+	const height = 240
+	const padding = {
+		bottom: 42,
+		left: 76,
+		right: 24,
+		top: 24,
+	}
+	const chartWidth = width - padding.left - padding.right
+	const chartHeight = height - padding.top - padding.bottom
+	const gridLines = [0, 0.5, 1].map((ratio) => {
+		const value = yMin + (yMax - yMin) * (1 - ratio)
+		return {
+			ratio,
+			value,
+			y: padding.top + chartHeight * ratio,
+		}
+	})
+
+	function mapX(time: number): number {
+		return padding.left + ((time - xMin) / xSpan) * chartWidth
+	}
+
+	function mapY(price: number): number {
+		return padding.top + ((yMax - price) / Math.max(1, yMax - yMin)) * chartHeight
+	}
+
+	function buildPolyline(key: "buyPrice" | "sellPrice"): string {
+		return chartPoints
+			.flatMap((point) => {
+				const price = point[key]
+
+				if (!isFiniteNumber(price)) {
+					return []
+				}
+
+				return [`${mapX(point.time).toFixed(2)},${mapY(price).toFixed(2)}`]
+			})
+			.join(" ")
+	}
+
+	function renderRangeMarkers({
+		maxKey,
+		minKey,
+		stroke,
+	}: {
+		maxKey: "buyMax" | "sellMax"
+		minKey: "buyMin" | "sellMin"
+		stroke: string
+	}) {
+		return chartPoints.map((point) => {
+			const minPrice = point[minKey]
+			const maxPrice = point[maxKey]
+
+			if (!isFiniteNumber(minPrice) || !isFiniteNumber(maxPrice) || minPrice === maxPrice) {
+				return null
+			}
+
+			return (
+				<line
+					key={`${point.time}-${minKey}-${maxKey}`}
+					x1={mapX(point.time)}
+					x2={mapX(point.time)}
+					y1={mapY(maxPrice)}
+					y2={mapY(minPrice)}
+					stroke={stroke}
+					strokeLinecap="round"
+					strokeWidth="5"
+				/>
+			)
+		})
+	}
+
+	const buyPolyline = buildPolyline("buyPrice")
+	const sellPolyline = buildPolyline("sellPrice")
+
+	return (
+		<Stack spacing={1.25}>
+			<Box
+				sx={{
+					display: "grid",
+					gap: 1.25,
+					gridTemplateColumns: {
+						xs: "1fr",
+						sm: "repeat(2, minmax(0, 1fr))",
+						md: "repeat(4, minmax(0, 1fr))",
+					},
+				}}
+			>
+				<Box sx={compactMetricSx}>
+					<Typography variant="caption" color="text.secondary">Resolution</Typography>
+					<Typography sx={{ fontWeight: 750 }}>{priceHistoryResolutionLabel(history.resolution)}</Typography>
+				</Box>
+				<Box sx={compactMetricSx}>
+					<Typography variant="caption" color="text.secondary">Samples</Typography>
+					<Typography sx={{ fontWeight: 750 }}>{formatNumber(history.point_count)}</Typography>
+				</Box>
+				<Box sx={compactMetricSx}>
+					<Typography variant="caption" color="text.secondary">Latest Buy</Typography>
+					<Typography sx={{ color: "#1565c0", fontWeight: 750 }}>
+						{formatCoins(lastPoint?.buyPrice)}
+					</Typography>
+				</Box>
+				<Box sx={compactMetricSx}>
+					<Typography variant="caption" color="text.secondary">Latest Sell</Typography>
+					<Typography sx={{ color: "#2e7d32", fontWeight: 750 }}>
+						{formatCoins(lastPoint?.sellPrice)}
+					</Typography>
+				</Box>
+			</Box>
+
+			<Paper
+				variant="outlined"
+				sx={{
+					bgcolor: "rgba(255, 255, 255, 0.78)",
+					borderColor: "rgba(98, 63, 24, 0.14)",
+					p: 1.5,
+				}}
+			>
+				<Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mb: 1 }}>
+					<Stack direction="row" spacing={0.75} alignItems="center">
+						<Box sx={{ bgcolor: "#1565c0", borderRadius: "999px", height: 8, width: 22 }} />
+						<Typography variant="caption" color="text.secondary">Buy orders</Typography>
+					</Stack>
+					<Stack direction="row" spacing={0.75} alignItems="center">
+						<Box sx={{ bgcolor: "#2e7d32", borderRadius: "999px", height: 8, width: 22 }} />
+						<Typography variant="caption" color="text.secondary">Sell listings</Typography>
+					</Stack>
+					<Typography variant="caption" color="text.secondary">
+						Rollup ranges show min/max when available.
+					</Typography>
+					<Typography variant="caption" color="text.secondary" sx={{ ml: { sm: "auto" } }}>
+						Latest: {formatDateTime(lastPoint?.observedAt)}
+					</Typography>
+				</Stack>
+
+				<Box sx={{ overflow: "hidden", width: "100%" }}>
+					<svg
+						aria-label={`${history.name} price history`}
+						role="img"
+						viewBox={`0 0 ${width} ${height}`}
+						style={{ display: "block", height: "auto", width: "100%" }}
+					>
+						<rect x="0" y="0" width={width} height={height} fill="#fffdf8" rx="6" />
+						{gridLines.map((line) => (
+							<g key={line.ratio}>
+								<line
+									x1={padding.left}
+									x2={width - padding.right}
+									y1={line.y}
+									y2={line.y}
+									stroke="rgba(98, 63, 24, 0.14)"
+									strokeWidth="1"
+								/>
+								<text
+									x={padding.left - 8}
+									y={line.y + 4}
+									fill="#6a5a47"
+									fontSize="12"
+									textAnchor="end"
+								>
+									{formatCoins(line.value)}
+								</text>
+							</g>
+						))}
+						<line
+							x1={padding.left}
+							x2={padding.left}
+							y1={padding.top}
+							y2={height - padding.bottom}
+							stroke="rgba(98, 63, 24, 0.2)"
+							strokeWidth="1.5"
+						/>
+						<line
+							x1={padding.left}
+							x2={width - padding.right}
+							y1={height - padding.bottom}
+							y2={height - padding.bottom}
+							stroke="rgba(98, 63, 24, 0.2)"
+							strokeWidth="1.5"
+						/>
+						<text
+							x={padding.left}
+							y={height - 14}
+							fill="#6a5a47"
+							fontSize="12"
+							textAnchor="start"
+						>
+							{formatChartTimestamp(xMin)}
+						</text>
+						<text
+							x={width - padding.right}
+							y={height - 14}
+							fill="#6a5a47"
+							fontSize="12"
+							textAnchor="end"
+						>
+							{formatChartTimestamp(xMax)}
+						</text>
+						{renderRangeMarkers({ minKey: "buyMin", maxKey: "buyMax", stroke: "rgba(21, 101, 192, 0.18)" })}
+						{renderRangeMarkers({ minKey: "sellMin", maxKey: "sellMax", stroke: "rgba(46, 125, 50, 0.18)" })}
+						{buyPolyline && (
+							<polyline points={buyPolyline} fill="none" stroke="#1565c0" strokeWidth="3" strokeLinejoin="round" />
+						)}
+						{sellPolyline && (
+							<polyline points={sellPolyline} fill="none" stroke="#2e7d32" strokeWidth="3" strokeLinejoin="round" />
+						)}
+						{chartPoints.length <= 80 &&
+							chartPoints.map((point) => (
+								<g key={`${point.time}-${point.buyPrice ?? "x"}-${point.sellPrice ?? "x"}`}>
+									{isFiniteNumber(point.buyPrice) && (
+										<circle cx={mapX(point.time)} cy={mapY(point.buyPrice)} r="3.5" fill="#1565c0">
+											<title>
+												{`${formatDateTime(point.observedAt)} buy ${formatCoins(point.buyPrice)}`}
+											</title>
+										</circle>
+									)}
+									{isFiniteNumber(point.sellPrice) && (
+										<circle cx={mapX(point.time)} cy={mapY(point.sellPrice)} r="3.5" fill="#2e7d32">
+											<title>
+												{`${formatDateTime(point.observedAt)} sell ${formatCoins(point.sellPrice)}`}
+											</title>
+										</circle>
+									)}
+								</g>
+							))}
+					</svg>
+				</Box>
+			</Paper>
+		</Stack>
+	)
 }
 
 export default function ProfitableCraftsPage() {
+    const [accountId, setAccountId] = useState("")
+    const [profiles, setProfiles] = useState<AccountProfile[]>([])
+    const [revision, setRevision] = useState(0)
+    const [profileError, setProfileError] = useState<string | null>(null)
+    const reloadProfiles = useCallback(async () => {
+        try { setProfiles(await fetchAccountProfiles()); setProfileError(null) }
+        catch { setProfileError("Accounts could not be loaded. Refresh the page to retry.") }
+    }, [])
+    useEffect(() => { const timer = setTimeout(() => { void reloadProfiles() }, 0); return () => clearTimeout(timer) }, [reloadProfiles])
+    return <CraftsWorkspace key={`${accountId}:${revision}`} accountId={accountId} profiles={profiles}
+        profileError={profileError} onAccountChange={setAccountId}
+        onAccountSynced={id => { setAccountId(id); setRevision(v => v + 1); void reloadProfiles() }} />
+}
+
+function CraftsWorkspace({ accountId, profiles, profileError, onAccountChange, onAccountSynced }: {
+    accountId: string; profiles: AccountProfile[]; profileError: string | null
+    onAccountChange: (id: string) => void; onAccountSynced: (id: string) => void
+}) {
 	const [rows, setRows] = useState<ProfitableCraft[]>([])
 	const [loading, setLoading] = useState(false)
 	const [error, setError] = useState<string | null>(null)
@@ -375,14 +658,13 @@ export default function ProfitableCraftsPage() {
 	const [syncInProgress, setSyncInProgress] = useState<SyncDataset | null>(null)
 	const [syncError, setSyncError] = useState<string | null>(null)
 	const [syncMessage, setSyncMessage] = useState<string | null>(null)
-	const [accountApiKey, setAccountApiKey] = useState(loadSavedAccountApiKey)
-	const [accountKeySaved, setAccountKeySaved] = useState(() => loadSavedAccountApiKey().trim().length > 0)
+	const [accountApiKey, setAccountApiKey] = useState("")
 	const [accountSyncing, setAccountSyncing] = useState(false)
 	const [accountSyncError, setAccountSyncError] = useState<string | null>(null)
 	const [accountSyncMessage, setAccountSyncMessage] = useState<string | null>(null)
-	const [watchlistIds, setWatchlistIds] = useState(loadSavedWatchlistIds)
+	const [watchlistIds, setWatchlistIds] = useState(() => loadSavedWatchlistIds(accountId))
 	const [watchlistOnly, setWatchlistOnly] = useState(false)
-	const [filterPresets, setFilterPresets] = useState(loadSavedFilterPresets)
+	const [filterPresets, setFilterPresets] = useState(() => loadSavedFilterPresets(accountId))
 	const [filterPresetName, setFilterPresetName] = useState("")
 	const [selectedFilterPresetId, setSelectedFilterPresetId] = useState("")
 	const [filterPresetMessage, setFilterPresetMessage] = useState<string | null>(null)
@@ -391,6 +673,10 @@ export default function ProfitableCraftsPage() {
 	const [scenarioRows, setScenarioRows] = useState<ProfitScenario[]>([])
 	const [listingDepth, setListingDepth] = useState<ListingDepthAnalysis | null>(null)
 	const [listingDepthError, setListingDepthError] = useState<string | null>(null)
+	const [priceHistory, setPriceHistory] = useState<PriceHistoryResponse | null>(null)
+	const [priceHistoryError, setPriceHistoryError] = useState<string | null>(null)
+	const [priceHistoryLoading, setPriceHistoryLoading] = useState(false)
+	const [priceHistoryRangeDays, setPriceHistoryRangeDays] = useState(7)
 	const [tableDepthByKey, setTableDepthByKey] = useState<Record<string, ListingDepthAnalysis>>({})
 	const [tableDepthErrorsByKey, setTableDepthErrorsByKey] = useState<Record<string, string>>({})
 	const [tableDepthLoading, setTableDepthLoading] = useState(false)
@@ -398,8 +684,6 @@ export default function ProfitableCraftsPage() {
 	const [tableDepthMessage, setTableDepthMessage] = useState<string | null>(null)
 	const [detailLoading, setDetailLoading] = useState(false)
 	const [detailError, setDetailError] = useState<string | null>(null)
-	const [batchOutputCount, setBatchOutputCount] = useState(1)
-	const [shoppingListCopyMessage, setShoppingListCopyMessage] = useState<string | null>(null)
 
 	const [limit, setLimit] = useState(50)
 	const [minProfit, setMinProfit] = useState(0)
@@ -407,6 +691,7 @@ export default function ProfitableCraftsPage() {
 	const [minSellQuantity, setMinSellQuantity] = useState(5)
 	const [excludeLowLiquidity, setExcludeLowLiquidity] = useState(true)
 	const [excludeSuspiciousSpread, setExcludeSuspiciousSpread] = useState(true)
+	const [excludeStalledMarkets, setExcludeStalledMarkets] = useState(true)
 	const [discipline, setDiscipline] = useState("")
 	const [itemNameSearch, setItemNameSearch] = useState("")
 
@@ -415,7 +700,12 @@ export default function ProfitableCraftsPage() {
 
 	const [materialPricing, setMaterialPricing] = useState<MaterialPricingMode>("buy")
 	const [outputPricing, setOutputPricing] = useState<OutputPricingMode>("sell")
-	const hasLoadedInitialData = useRef(false)
+    const [eligibleOnly, setEligibleOnly] = useState(Boolean(accountId))
+	const tableRequest = useRef(0)
+	const detailRequest = useRef(0)
+	const depthRequest = useRef(0)
+	const alive = useRef(true)
+	useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
 
 	const watchlistIdSet = useMemo(() => new Set(watchlistIds), [watchlistIds])
 
@@ -427,6 +717,7 @@ export default function ProfitableCraftsPage() {
 			minSellQuantity,
 			excludeLowLiquidity,
 			excludeSuspiciousSpread,
+			excludeStalledMarkets,
 			discipline,
 			itemNameSearch,
 			materialPricing,
@@ -436,43 +727,60 @@ export default function ProfitableCraftsPage() {
 	}
 
 	const loadData = useCallback(async () => {
-		try {
+        const request = ++tableRequest.current
+        ++detailRequest.current
+        ++depthRequest.current
+        setSelectedItem(null)
+        setRows([])
+        setTableDepthByKey({})
+        setTableDepthErrorsByKey({})
+        setTableDepthLoading(false)
+        setDetailLoading(false)
+        try {
 			setLoading(true)
 			setError(null)
 
 			const [data, status, holdingsStatus] = await Promise.all([
 				fetchProfitableCrafts({
+					account_id: accountId || undefined,
+                    eligible_only: eligibleOnly,
 					limit,
 					min_profit: minProfit,
 					min_buy_quantity: minBuyQuantity,
 					min_sell_quantity: minSellQuantity,
 					exclude_low_liquidity: excludeLowLiquidity,
 					exclude_suspicious_spread: excludeSuspiciousSpread,
+					exclude_stalled_markets: excludeStalledMarkets,
 					discipline: discipline || undefined,
 					material_pricing: materialPricing,
 					output_pricing: outputPricing,
 				}),
 				fetchSyncStatus().catch(() => null),
-				fetchAccountHoldingsStatus().catch(() => null),
+				accountId ? fetchAccountHoldingsStatus(accountId).catch(() => null) : Promise.resolve(null),
 			])
 
+			if (!alive.current || request !== tableRequest.current) return
 			setRows(data)
 			setSyncStatus(status)
 			setAccountHoldingsStatus(holdingsStatus)
 			setSyncStatusCheckedAt(status ? new Date() : null)
 			setLastLoadedAt(new Date())
 		} catch (err) {
+			if (!alive.current || request !== tableRequest.current) return
 			if (err instanceof Error) {
 				setError(err.message)
 			} else {
 				setError("Unknown error occurred.")
 			}
 		} finally {
-			setLoading(false)
+			if (alive.current && request === tableRequest.current) setLoading(false)
 		}
 	}, [
+		accountId,
+        eligibleOnly,
 		discipline,
 		excludeLowLiquidity,
+		excludeStalledMarkets,
 		excludeSuspiciousSpread,
 		limit,
 		materialPricing,
@@ -482,23 +790,55 @@ export default function ProfitableCraftsPage() {
 		outputPricing,
 	])
 
-	async function handleSelectItem(itemId: number) {
+	async function loadPriceHistoryForItem(
+		itemId: number,
+		rangeDays: number,
+	): Promise<PriceHistoryResponse | null> {
+		try {
+			return await fetchPriceHistory(itemId, {
+				range_days: rangeDays,
+				resolution: "auto",
+			})
+		} catch (err) {
+			if (err instanceof Error) {
+				setPriceHistoryError(err.message)
+			} else {
+				setPriceHistoryError("Unknown error occurred while loading local price history.")
+			}
+
+			return null
+		}
+	}
+
+	async function handleSelectItem(itemId: number, recipeId: number) {
+		const request = ++detailRequest.current
+		setSelectedItem(null)
 		try {
 			setDetailLoading(true)
 			setDetailError(null)
 			setScenarioRows([])
 			setListingDepth(null)
 			setListingDepthError(null)
+			setPriceHistory(null)
+			setPriceHistoryError(null)
+			setPriceHistoryLoading(true)
 
-			const [detail, scenarios, depth] = await Promise.all([
+			const [detail, scenarios, depth, history] = await Promise.all([
 				fetchProfitDetail(itemId, {
+					recipe_id: recipeId,
+					account_id: accountId || undefined,
+                    eligible_only: eligibleOnly,
 					material_pricing: materialPricing,
 					output_pricing: outputPricing,
 				}),
-				fetchProfitScenarios(itemId),
+				fetchProfitScenarios(itemId, accountId || undefined, recipeId, eligibleOnly),
 				fetchListingDepth(itemId, {
+                    account_id: accountId || undefined, eligible_only: eligibleOnly,
+					recipe_id: recipeId,
 					material_pricing: materialPricing,
+                        output_pricing: outputPricing,
 				}).catch((err) => {
+					if (!alive.current || request !== detailRequest.current) return null
 					if (err instanceof Error) {
 						setListingDepthError(err.message)
 					} else {
@@ -507,21 +847,39 @@ export default function ProfitableCraftsPage() {
 
 					return null
 				}),
+				loadPriceHistoryForItem(itemId, priceHistoryRangeDays),
 			])
+			if (!alive.current || request !== detailRequest.current) return
 			setSelectedItem(detail)
 			setScenarioRows(scenarios)
 			setListingDepth(depth)
-			setBatchOutputCount(Math.max(1, detail.output_item_count ?? 1))
-			setShoppingListCopyMessage(null)
+			setPriceHistory(history)
 		} catch (err) {
+			if (!alive.current || request !== detailRequest.current) return
 			if (err instanceof Error) {
 				setDetailError(err.message)
 			} else {
 				setDetailError("Unknown error occurred.")
 			}
 		} finally {
-			setDetailLoading(false)
+			if (alive.current && request === detailRequest.current) { setDetailLoading(false); setPriceHistoryLoading(false) }
 		}
+	}
+
+	async function handlePriceHistoryRangeChange(nextRangeDays: number) {
+		setPriceHistoryRangeDays(nextRangeDays)
+
+		if (selectedItem === null) {
+			return
+		}
+
+		setPriceHistory(null)
+		setPriceHistoryError(null)
+		setPriceHistoryLoading(true)
+
+		const history = await loadPriceHistoryForItem(selectedItem.item_id, nextRangeDays)
+		setPriceHistory(history)
+		setPriceHistoryLoading(false)
 	}
 
 	function handleSort(nextKey: SortKey) {
@@ -535,6 +893,8 @@ export default function ProfitableCraftsPage() {
 	}
 
 	async function handleDataSync(dataset: SyncDataset) {
+		const selectedItemId = selectedItem?.item_id
+
 		try {
 			setSyncInProgress(dataset)
 			setSyncError(null)
@@ -560,6 +920,19 @@ export default function ProfitableCraftsPage() {
 			}
 
 			await loadData()
+
+			if (dataset === "prices" && selectedItemId !== undefined) {
+				try {
+					setPriceHistory(null)
+					setPriceHistoryError(null)
+					setPriceHistoryLoading(true)
+
+					const history = await loadPriceHistoryForItem(selectedItemId, priceHistoryRangeDays)
+					setPriceHistory(history)
+				} finally {
+					setPriceHistoryLoading(false)
+				}
+			}
 		} catch (err) {
 			if (err instanceof Error) {
 				setSyncError(err.message)
@@ -571,55 +944,23 @@ export default function ProfitableCraftsPage() {
 		}
 	}
 
-	function handleSaveAccountApiKey() {
-		saveAccountApiKey(accountApiKey)
-
-		if (accountApiKey.trim()) {
-			setAccountKeySaved(true)
-			setAccountSyncMessage("Saved GW2 API key in this browser.")
-			setAccountSyncError(null)
-			return
-		}
-
-		setAccountKeySaved(false)
-		setAccountSyncMessage("Cleared local GW2 API key.")
-		setAccountSyncError(null)
-	}
-
-	async function handleAccountHoldingsSync() {
-		const apiKey = accountApiKey.trim()
-
-		if (!apiKey) {
-			setAccountSyncError("Enter a GW2 API key before syncing account holdings.")
-			setAccountSyncMessage(null)
-			return
-		}
-
-		try {
-			setAccountSyncing(true)
-			setAccountSyncError(null)
-			setAccountSyncMessage(null)
-
-			const result = await syncAccountHoldings(apiKey)
-			setAccountSyncMessage(
-				`Synced ${formatNumber(result.unique_items)} account item holdings across material storage and bank.`,
-			)
-			const selectedItemId = selectedItem?.item_id
-			await loadData()
-
-			if (selectedItemId !== undefined) {
-				await handleSelectItem(selectedItemId)
-			}
-		} catch (err) {
-			if (err instanceof Error) {
-				setAccountSyncError(err.message)
-			} else {
-				setAccountSyncError("Unknown error occurred while syncing account holdings.")
-			}
-		} finally {
-			setAccountSyncing(false)
-		}
-	}
+    async function handleAccountHoldingsSync() {
+        const apiKey = accountApiKey.trim()
+        if (!apiKey) { setAccountSyncError("Enter a GW2 API key."); return }
+        setAccountSyncing(true)
+        setAccountSyncError(null)
+        setAccountSyncMessage(null)
+        try {
+            const result = await syncAccountHoldings(apiKey, accountId || undefined)
+            if (!alive.current) return
+            setAccountApiKey("")
+            onAccountSynced(result.account_id)
+        } catch (err) {
+            if (alive.current) setAccountSyncError(err instanceof Error ? err.message : "Account refresh failed.")
+        } finally {
+            if (alive.current) setAccountSyncing(false)
+        }
+    }
 
 	function handleToggleWatchlistItem(itemId: number) {
 		setWatchlistIds((current) => {
@@ -627,7 +968,7 @@ export default function ProfitableCraftsPage() {
 				? current.filter((currentItemId) => currentItemId !== itemId)
 				: [...current, itemId]
 
-			saveWatchlistIds(next)
+			saveWatchlistIds(next, accountId)
 			return next
 		})
 	}
@@ -639,6 +980,7 @@ export default function ProfitableCraftsPage() {
 		setMinSellQuantity(settings.minSellQuantity)
 		setExcludeLowLiquidity(settings.excludeLowLiquidity)
 		setExcludeSuspiciousSpread(settings.excludeSuspiciousSpread)
+		setExcludeStalledMarkets(settings.excludeStalledMarkets)
 		setDiscipline(settings.discipline)
 		setItemNameSearch(settings.itemNameSearch)
 		setMaterialPricing(settings.materialPricing)
@@ -667,7 +1009,7 @@ export default function ProfitableCraftsPage() {
 			: [...filterPresets, nextPreset]
 
 		setFilterPresets(nextPresets)
-		saveFilterPresets(nextPresets)
+		saveFilterPresets(nextPresets, accountId)
 		setSelectedFilterPresetId(nextPreset.id)
 		setFilterPresetMessage(`Saved filter preset "${trimmedName}".`)
 	}
@@ -695,26 +1037,13 @@ export default function ProfitableCraftsPage() {
 
 		const nextPresets = filterPresets.filter((current) => current.id !== preset.id)
 		setFilterPresets(nextPresets)
-		saveFilterPresets(nextPresets)
+		saveFilterPresets(nextPresets, accountId)
 		setSelectedFilterPresetId("")
 		setFilterPresetName("")
 		setFilterPresetMessage(`Deleted filter preset "${preset.name}".`)
 	}
 
-	async function handleCopyShoppingList() {
-		if (shoppingPlan === null) {
-			return
-		}
-
-		try {
-			await navigator.clipboard.writeText(shoppingPlan.copyText)
-			setShoppingListCopyMessage("Shopping list copied.")
-		} catch {
-			setShoppingListCopyMessage("Could not copy shopping list from this browser.")
-		}
-	}
-
-	function valueAddColor(value: number): string {
+	function valueAddColor(value: number | null): string {
 		return signedValueColor(value)
 	}
 
@@ -747,11 +1076,11 @@ export default function ProfitableCraftsPage() {
 	}
 
 	function tableDepthForRow(row: ProfitableCraft): ListingDepthAnalysis | undefined {
-		return tableDepthByKey[listingDepthCacheKey(row.item_id, materialPricing)]
+		return tableDepthByKey[listingDepthCacheKey(row.item_id, materialPricing, outputPricing)]
 	}
 
 	function tableDepthErrorForRow(row: ProfitableCraft): string | undefined {
-		return tableDepthErrorsByKey[listingDepthCacheKey(row.item_id, materialPricing)]
+		return tableDepthErrorsByKey[listingDepthCacheKey(row.item_id, materialPricing, outputPricing)]
 	}
 
 	function RiskChips({
@@ -805,7 +1134,8 @@ export default function ProfitableCraftsPage() {
 		)
 	}
 
-	function signedValueColor(value: number): string {
+	function signedValueColor(value: number | null): string {
+		if (value === null) return "text.secondary"
 		if (value > 0) {
 			return "success.main"
 		}
@@ -865,6 +1195,80 @@ export default function ProfitableCraftsPage() {
 				size="small"
 				variant={recommendation === "Break Even" ? "outlined" : "filled"}
 				sx={{ fontWeight: 800 }}
+			/>
+		)
+	}
+
+	function HistoryAvailabilityChip({ hasHistory }: { hasHistory: boolean }) {
+		return (
+			<Chip
+				label={hasHistory ? "Recorded" : "No data"}
+				color={hasHistory ? "success" : "default"}
+				size="small"
+				title={
+					hasHistory
+						? "This item has local price history snapshots or rollups."
+						: "No local price history is stored for this item yet."
+				}
+				variant={hasHistory ? "filled" : "outlined"}
+				sx={{ fontWeight: 700 }}
+			/>
+		)
+	}
+
+	function marketFlowChipColor(
+		status: ProfitableCraft["market_flow_status"],
+	): "success" | "warning" | "error" | "default" {
+		if (status === "moving") {
+			return "success"
+		}
+
+		if (status === "slow") {
+			return "warning"
+		}
+
+		if (status === "stalled") {
+			return "error"
+		}
+
+		return "default"
+	}
+
+	function marketFlowLabel(status: ProfitableCraft["market_flow_status"]): string {
+		if (status === "moving") {
+			return "Moving"
+		}
+
+		if (status === "slow") {
+			return "Slow"
+		}
+
+		if (status === "stalled") {
+			return "Stalled"
+		}
+
+		return "Unknown"
+	}
+
+	function formatMarketFlowScore(value: number | null | undefined): string {
+		if (value === null || value === undefined) {
+			return "-"
+		}
+
+		return `${formatNumber(value)}/100`
+	}
+
+	function MarketFlowChip({ row }: { row: ProfitableCraft }) {
+		const status = row.market_flow_status ?? "unknown"
+
+		return (
+			<Chip
+				label={marketFlowLabel(status)}
+				color={marketFlowChipColor(status)}
+				size="small"
+				title={row.market_flow_summary || "No market flow signal available."}
+				variant={status === "unknown" ? "outlined" : "filled"}
+				sx={{ fontWeight: 750 }}
 			/>
 		)
 	}
@@ -987,13 +1391,13 @@ export default function ProfitableCraftsPage() {
 					comparison = a.net_sale - b.net_sale
 					break
 				case "ingredient_sale_value":
-					comparison = a.ingredient_sale_value - b.ingredient_sale_value
+					comparison = (a.ingredient_sale_value ?? -Infinity) - (b.ingredient_sale_value ?? -Infinity)
 					break
 				case "crafted_item_value":
 					comparison = a.crafted_item_value - b.crafted_item_value
 					break
 				case "value_add":
-					comparison = a.value_add - b.value_add
+					comparison = (a.value_add ?? -Infinity) - (b.value_add ?? -Infinity)
 					break
 				case "recommendation":
 					comparison = a.recommendation.localeCompare(b.recommendation)
@@ -1003,6 +1407,9 @@ export default function ProfitableCraftsPage() {
 					break
 				case "roi":
 					comparison = (a.roi ?? -Infinity) - (b.roi ?? -Infinity)
+					break
+				case "market_flow_score":
+					comparison = (a.market_flow_score ?? -Infinity) - (b.market_flow_score ?? -Infinity)
 					break
 				case "buy_quantity":
 					comparison = a.buy_quantity - b.buy_quantity
@@ -1024,7 +1431,7 @@ export default function ProfitableCraftsPage() {
 		}
 
 		if (rows.length === 0) {
-			return "No profitable crafts are loaded yet. Use Data Sync to load items, recipes, and prices, then reload the table."
+			return "No matching profitable crafts. Sync recipes, prices and account data; check crafting coverage and reservations, or switch off the account filter to inspect market estimates."
 		}
 
 		if (watchlistOnly && watchlistIds.length === 0) {
@@ -1043,12 +1450,8 @@ export default function ProfitableCraftsPage() {
 	}, [error, itemNameSearch, loading, rows.length, sortedRows.length, watchlistIds.length, watchlistOnly])
 
 	async function handleLoadTableDepth() {
-		const rowsToLoad = sortedRows
-			.filter((row) => {
-				const cacheKey = listingDepthCacheKey(row.item_id, materialPricing)
-				return tableDepthByKey[cacheKey] === undefined && tableDepthErrorsByKey[cacheKey] === undefined
-			})
-			.slice(0, tableDepthLoadLimit)
+		const request = ++depthRequest.current
+		const rowsToLoad = sortedRows.slice(0, tableDepthLoadLimit)
 
 		if (rowsToLoad.length === 0) {
 			setTableDepthMessage("Depth is already loaded for the current top rows.")
@@ -1063,17 +1466,22 @@ export default function ProfitableCraftsPage() {
 
 		try {
 			for (const row of rowsToLoad) {
-				const cacheKey = listingDepthCacheKey(row.item_id, materialPricing)
+				const cacheKey = listingDepthCacheKey(row.item_id, materialPricing, outputPricing)
 
 				try {
 					const depth = await fetchListingDepth(row.item_id, {
+                        account_id: accountId || undefined, eligible_only: eligibleOnly,
+						recipe_id: row.recipe_id,
 						material_pricing: materialPricing,
+                        output_pricing: outputPricing,
 					})
+					if (!alive.current || request !== depthRequest.current) return
 					setTableDepthByKey((current) => ({
 						...current,
 						[cacheKey]: depth,
 					}))
 				} catch (err) {
+					if (!alive.current || request !== depthRequest.current) return
 					const message = err instanceof Error ? err.message : "Unable to load listing depth."
 					setTableDepthErrorsByKey((current) => ({
 						...current,
@@ -1099,8 +1507,12 @@ export default function ProfitableCraftsPage() {
 		}
 
 		const topProfit = filteredRows.reduce((best, row) => (row.profit > best.profit ? row : best), filteredRows[0])
-		const bestValueAdd = filteredRows.reduce((best, row) => (row.value_add > best.value_add ? row : best), filteredRows[0])
-		const highestRoi = filteredRows.reduce<ProfitableCraft | null>((best, row) => {
+		const bestValueAdd = filteredRows.reduce((best, row) => ((row.value_add ?? -Infinity) > (best.value_add ?? -Infinity) ? row : best), filteredRows[0])
+		const actionableRows = filteredRows.filter(
+			(row) => row.market_flow_status === "moving" || row.market_flow_status === "slow",
+		)
+		const roiRows = actionableRows.length > 0 ? actionableRows : filteredRows
+		const highestActionableRoi = roiRows.reduce<ProfitableCraft | null>((best, row) => {
 			if (row.roi === null) {
 				return best
 			}
@@ -1127,20 +1539,20 @@ export default function ProfitableCraftsPage() {
 				valueKind: "currency" as const,
 			},
 			{
-				label: "Best Value Add",
+				label: bestValueAdd.value_add === null ? "Value Add Unknown" : "Best Value Add",
 				name: bestValueAdd.name,
-				value: bestValueAdd.value_add,
+				value: bestValueAdd.value_add ?? 0,
 				formattedValue: formatCoins(bestValueAdd.value_add),
 				valueKind: "currency" as const,
 			},
 		]
 
-		if (highestRoi !== null) {
+		if (highestActionableRoi !== null) {
 			highlights.push({
-				label: "Highest ROI",
-				name: highestRoi.name,
-				value: highestRoi.roi ?? 0,
-				formattedValue: formatPercent(highestRoi.roi),
+				label: actionableRows.length > 0 ? "ROI with listing activity" : "Highest ROI",
+				name: highestActionableRoi.name,
+				value: highestActionableRoi.roi ?? 0,
+				formattedValue: formatPercent(highestActionableRoi.roi),
 				valueKind: "roi" as const,
 			})
 		}
@@ -1171,74 +1583,11 @@ export default function ProfitableCraftsPage() {
 		return null
 	}, [syncStatus])
 
-	const shoppingPlan = useMemo<ShoppingPlan | null>(() => {
-		if (selectedItem === null) {
-			return null
-		}
-
-		const outputPerRecipe = Math.max(1, selectedItem.output_item_count ?? 1)
-		const requestedOutputCount = Math.max(1, Math.floor(batchOutputCount) || 1)
-		const recipeRuns = Math.ceil(requestedOutputCount / outputPerRecipe)
-		const plannedOutputCount = recipeRuns * outputPerRecipe
-		const rows = (selectedItem.ingredients ?? []).map((ingredient) => {
-			const requiredCount = ingredient.count * recipeRuns
-			const ownedCount = ingredient.owned_count ?? 0
-			const ownedAppliedCount = Math.min(requiredCount, ownedCount)
-			const missingCount = Math.max(requiredCount - ownedCount, 0)
-			const missingBuyCost = ingredient.buy_price === null ? null : ingredient.buy_price * missingCount
-
-			return {
-				itemId: ingredient.item_id,
-				name: ingredient.name,
-				requiredCount,
-				ownedCount,
-				ownedAppliedCount,
-				missingCount,
-				unitBuyPrice: ingredient.buy_price,
-				missingBuyCost,
-			}
-		})
-		const missingBuyCost = rows.reduce((total, row) => total + (row.missingBuyCost ?? 0), 0)
-		const requiredIngredientCount = rows.reduce((total, row) => total + row.requiredCount, 0)
-		const ownedAppliedCount = rows.reduce((total, row) => total + row.ownedAppliedCount, 0)
-		const ownedCoverageRatio = requiredIngredientCount > 0 ? ownedAppliedCount / requiredIngredientCount : 1
-		const hasUnavailablePrices = rows.some((row) => row.missingCount > 0 && row.missingBuyCost === null)
-		const totalNetSale = selectedItem.net_sale * plannedOutputCount
-		const instantSellDepthLimit = listingDepth?.instant_sell_limit_quantity ?? null
-		const planWithoutCopy = {
-			requestedOutputCount,
-			recipeRuns,
-			plannedOutputCount,
-			totalCraftCost: selectedItem.craft_cost * plannedOutputCount,
-			totalNetSale,
-			marketProfit: selectedItem.profit * plannedOutputCount,
-			outOfPocketCost: missingBuyCost,
-			outOfPocketProfit: totalNetSale - missingBuyCost,
-			requiredIngredientCount,
-			ownedAppliedCount,
-			ownedCoverageRatio,
-			missingBuyCost,
-			hasUnavailablePrices,
-			instantSellDepthLimit,
-			plannedExceedsInstantSellDepth:
-				instantSellDepthLimit !== null && plannedOutputCount > instantSellDepthLimit,
-			rows,
-		}
-
-		return {
-			...planWithoutCopy,
-			copyText: buildShoppingListCopyText(selectedItem.name, planWithoutCopy),
-		}
-	}, [batchOutputCount, listingDepth, selectedItem])
-
 	useEffect(() => {
-		if (hasLoadedInitialData.current) {
-			return
-		}
-
-		hasLoadedInitialData.current = true
-		void loadData()
-	}, [loadData])
+        const tableCounter = tableRequest, detailCounter = detailRequest, depthCounter = depthRequest
+        const timer = setTimeout(() => { void loadData() }, 250)
+        return () => { clearTimeout(timer); tableCounter.current += 1; detailCounter.current += 1; depthCounter.current += 1 }
+    }, [loadData])
 
 	return (
 		<Box
@@ -1249,6 +1598,7 @@ export default function ProfitableCraftsPage() {
 			}}
 		>
 			<Stack spacing={3}>
+                <Alert severity="info">Select an account to verify active crafting levels and recipe unlocks. Eligible results use fresh bank/material stock, exclude reservations, and value consumed stock at resale prices. Daily-limited and unsupported crafting routes are excluded. Older recipe caches need Sync Recipes.</Alert>
 				<Box>
 					<Typography
 						variant="h4"
@@ -1258,7 +1608,7 @@ export default function ProfitableCraftsPage() {
 						Profitable Crafts
 					</Typography>
 					<Typography variant="body1" color="text.secondary">
-						Explore profitable Guild Wars 2 crafting opportunities using live Trading Post data.
+						{eligibleOnly ? "Account values are per output and include consumed stock’s resale value. Open a craft for quantities, purchases and named crafters." : "Market values are per output, using cached Trading Post prices. Open a craft for batch totals and account stock allocation."}
 					</Typography>
 				</Box>
 
@@ -1327,39 +1677,27 @@ export default function ProfitableCraftsPage() {
 									Account Holdings
 								</Typography>
 								<Typography variant="body2" color="text.secondary">
-									Read-only material storage and bank sync requires a GW2 API key with account and inventories permissions.
+									Choose the account before syncing. Keys need account, inventories, characters and unlocks permissions and are used only for this refresh.
 								</Typography>
 							</Box>
 
+							{profileError && <Alert severity="warning">{profileError}</Alert>}
 							<Stack direction={{ xs: "column", md: "row" }} spacing={1.5} flexWrap="wrap" useFlexGap>
+                                <TextField select label="Account" size="small" value={accountId}
+                                    onChange={event => onAccountChange(event.target.value)} sx={{ minWidth: 240 }}>
+                                    <MenuItem value="">Market estimates / Add account</MenuItem>
+                                    {profiles.map(profile => <MenuItem key={profile.id} value={profile.id} disabled={!profile.verified}>{profile.display_name}</MenuItem>)}
+                                </TextField>
 								<TextField
 									label="GW2 API Key"
 									type="password"
 									value={accountApiKey}
 									onChange={(e) => {
 										setAccountApiKey(e.target.value)
-										setAccountKeySaved(false)
 									}}
 									size="small"
 									sx={{ minWidth: { xs: "100%", md: 360 } }}
 								/>
-
-								<Button
-									variant="outlined"
-									disabled={accountSyncing || syncInProgress !== null}
-									onClick={handleSaveAccountApiKey}
-									sx={{
-										borderColor: accentColor,
-										color: accentColor,
-										minHeight: 40,
-										"&:hover": {
-											borderColor: "#8d5e25",
-											bgcolor: "rgba(165, 111, 44, 0.08)",
-										},
-									}}
-								>
-									{accountKeySaved ? "Key Saved" : "Save Key"}
-								</Button>
 
 								<Button
 									variant="contained"
@@ -1377,10 +1715,10 @@ export default function ProfitableCraftsPage() {
 									{accountSyncing ? (
 										<Stack direction="row" spacing={1} alignItems="center">
 											<CircularProgress color="inherit" size={16} />
-											<span>Syncing Holdings</span>
+											<span>Syncing Account Data</span>
 										</Stack>
 									) : (
-										"Sync Account Holdings"
+										"Sync Account Data"
 									)}
 								</Button>
 							</Stack>
@@ -1404,6 +1742,8 @@ export default function ProfitableCraftsPage() {
 					</Stack>
 				</Paper>
 
+                {accountId && <AccountCraftingPanel accountId={accountId} onChanged={() => onAccountSynced(accountId)} />}
+
 				<Paper
 					elevation={2}
 					sx={{
@@ -1421,7 +1761,9 @@ export default function ProfitableCraftsPage() {
 						>
 							Filters
 						</Typography>
-						<Stack direction={{ xs: "column", md: "row" }} spacing={2} flexWrap="wrap" useFlexGap>
+						{accountId && <FormControlLabel control={<Checkbox checked={eligibleOnly} onChange={e => setEligibleOnly(e.target.checked)} />} label="Only crafts this account can make (exclude reservations)" />}
+                        {eligibleOnly && <Typography variant="body2">Requires fresh crafting data, holdings and prices. Costs include consumed stock's resale value. Each result is an independent plan, not a combined shopping basket.</Typography>}
+                        <Stack direction={{ xs: "column", md: "row" }} spacing={2} flexWrap="wrap" useFlexGap>
 						<TextField
 							label="Limit"
 							type="number"
@@ -1496,6 +1838,16 @@ export default function ProfitableCraftsPage() {
 								/>
 							}
 							label="Exclude Suspicious Spread"
+						/>
+
+						<FormControlLabel
+							control={
+								<Checkbox
+									checked={excludeStalledMarkets}
+									onChange={(e) => setExcludeStalledMarkets(e.target.checked)}
+								/>
+							}
+							label="Exclude Stalled Markets"
 						/>
 
 						<FormControlLabel
@@ -1761,7 +2113,7 @@ export default function ProfitableCraftsPage() {
 									Table Risk Signals
 								</Typography>
 								<Typography variant="body2" color="text.secondary">
-									Low-liquidity and spread flags are immediate. Market depth columns load on demand for up to{" "}
+									Listing changes are not confirmed sales or sale-speed estimates. Depth uses fixed input costs; validate purchases in the craft plan. Market depth loads for up to{" "}
 									{formatNumber(tableDepthLoadLimit)} current rows.
 								</Typography>
 							</Box>
@@ -1815,22 +2167,24 @@ export default function ProfitableCraftsPage() {
 							maxHeight: "calc(100vh - 360px)",
 						}}
 					>
-						<Table stickyHeader size="small" sx={{ minWidth: 1900 }}>
+						<Table stickyHeader size="small" sx={{ minWidth: 2100 }}>
 							<TableHead>
 								<TableRow>
 									<SortableHeader label="Name" sortKey="name" sx={stickyNameHeaderSx} />
 									<TableCell sx={tableHeaderCellSx}>Watch</TableCell>
+									<TableCell sx={tableHeaderCellSx}>History</TableCell>
+									<SortableHeader label="Flow" sortKey="market_flow_score" />
 									<TableCell sx={tableHeaderCellSx}>Risk</TableCell>
 									<TableCell sx={tableHeaderCellSx}>Pressure</TableCell>
 									<TableCell align="right" sx={tableHeaderCellSx}>Instant Limit</TableCell>
 									<TableCell align="right" sx={tableHeaderCellSx}>Depth Profit</TableCell>
 									<TableCell sx={tableHeaderCellSx}>Disciplines</TableCell>
-									<SortableHeader align="right" label="Craft Cost" sortKey="craft_cost" />
+									<SortableHeader align="right" label={eligibleOnly ? "Economic Cost" : "Craft Cost"} sortKey="craft_cost" />
 									<SortableHeader align="right" label="Sell Price" sortKey="sell_price" />
 									<SortableHeader align="right" label="Net Sale" sortKey="net_sale" />
 									<SortableHeader
 										align="right"
-										label="Ingredient Value"
+										label={eligibleOnly ? "Owned Resale" : "Ingredient Value"}
 										sortKey="ingredient_sale_value"
 									/>
 									<SortableHeader
@@ -1838,7 +2192,7 @@ export default function ProfitableCraftsPage() {
 										label="Crafted Value"
 										sortKey="crafted_item_value"
 									/>
-									<SortableHeader align="right" label="Value Add" sortKey="value_add" />
+									<SortableHeader align="right" label={eligibleOnly ? "Gain vs Selling Stock" : "Value Add"} sortKey="value_add" />
 									<SortableHeader label="Recommendation" sortKey="recommendation" />
 									<SortableHeader align="right" label="Profit" sortKey="profit" />
 									<SortableHeader align="right" label="ROI" sortKey="roi" />
@@ -1855,10 +2209,10 @@ export default function ProfitableCraftsPage() {
 										<TableRow
 											key={row.item_id}
 											hover
-											onClick={() => void handleSelectItem(row.item_id)}
+											onClick={() => void handleSelectItem(row.item_id, row.recipe_id)}
 											sx={{ ...zebraRowSx, cursor: "pointer" }}
 										>
-											<TableCell sx={stickyNameCellSx}>{row.name}</TableCell>
+											<TableCell sx={stickyNameCellSx}>{row.name}{eligibleOnly && <Typography variant="caption" display="block">{row.eligible_characters?.map(c => c.name).join(", ")}</Typography>}</TableCell>
 											<TableCell>
 												<Button
 													variant={watchlistIdSet.has(row.item_id) ? "contained" : "outlined"}
@@ -1882,6 +2236,17 @@ export default function ProfitableCraftsPage() {
 												>
 													{watchlistIdSet.has(row.item_id) ? "Watching" : "Watch"}
 												</Button>
+											</TableCell>
+											<TableCell>
+												<HistoryAvailabilityChip hasHistory={row.has_price_history} />
+											</TableCell>
+											<TableCell>
+												<Stack spacing={0.5}>
+													<MarketFlowChip row={row} />
+													<Typography variant="caption" color="text.secondary">
+														{formatMarketFlowScore(row.market_flow_score)}
+													</Typography>
+												</Stack>
 											</TableCell>
 											<TableCell>
 												<RiskChips depth={depth} row={row} />
@@ -1958,10 +2323,14 @@ export default function ProfitableCraftsPage() {
 				anchor="right"
 				open={selectedItem !== null || detailLoading || detailError !== null}
 				onClose={() => {
+					++detailRequest.current
 					setSelectedItem(null)
 					setScenarioRows([])
 					setListingDepth(null)
 					setListingDepthError(null)
+					setPriceHistory(null)
+					setPriceHistoryError(null)
+					setPriceHistoryLoading(false)
 					setDetailError(null)
 				}}
 				PaperProps={{
@@ -2029,7 +2398,7 @@ export default function ProfitableCraftsPage() {
 								>
 									<Stack spacing={0.75}>
 										<Typography variant="caption" sx={{ color: "#6b4b25", fontWeight: 800 }}>
-											Current Recommendation
+											{eligibleOnly ? "Account comparison per output" : "Market comparison per output"}
 										</Typography>
 										<RecommendationChip recommendation={selectedItem.recommendation} />
 									</Stack>
@@ -2084,7 +2453,7 @@ export default function ProfitableCraftsPage() {
 								}}
 							>
 								<Box sx={compactMetricSx}>
-									<Typography variant="caption" color="text.secondary">Craft Cost</Typography>
+									<Typography variant="caption" color="text.secondary">{eligibleOnly ? "Economic Cost" : "Craft Cost"}</Typography>
 									<Typography sx={{ fontWeight: 750 }}>{formatCoins(selectedItem.craft_cost)}</Typography>
 								</Box>
 								<Box sx={compactMetricSx}>
@@ -2096,7 +2465,7 @@ export default function ProfitableCraftsPage() {
 									<Typography sx={{ fontWeight: 750 }}>{formatCoins(selectedItem.net_sale)}</Typography>
 								</Box>
 								<Box sx={compactMetricSx}>
-									<Typography variant="caption" color="text.secondary">Ingredient Value</Typography>
+									<Typography variant="caption" color="text.secondary">{eligibleOnly ? "Owned Resale" : "Ingredient Value"}</Typography>
 									<Typography sx={{ fontWeight: 750 }}>
 										{formatCoins(selectedItem.ingredient_sale_value)}
 									</Typography>
@@ -2115,185 +2484,86 @@ export default function ProfitableCraftsPage() {
 									<Typography variant="caption" color="text.secondary">Sell Quantity</Typography>
 									<Typography sx={{ fontWeight: 750 }}>{formatNumber(selectedItem.sell_quantity)}</Typography>
 								</Box>
+								<Box sx={compactMetricSx}>
+									<Typography variant="caption" color="text.secondary">Market Flow</Typography>
+									<Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.5 }}>
+										<MarketFlowChip row={selectedItem} />
+										<Typography variant="body2" sx={{ fontWeight: 750 }}>
+											{formatMarketFlowScore(selectedItem.market_flow_score)}
+										</Typography>
+									</Stack>
+								</Box>
 							</Box>
 
 							<Divider />
 
-							{shoppingPlan && (
-								<>
+							<Box>
+								<Stack
+									direction={{ xs: "column", sm: "row" }}
+									justifyContent="space-between"
+									spacing={1.5}
+									sx={{ mb: 1.5 }}
+								>
 									<Box>
-										<Stack
-											direction={{ xs: "column", md: "row" }}
-											justifyContent="space-between"
-											spacing={2}
-											sx={{ mb: 1.5 }}
-										>
-											<Box>
-												<Typography variant="h6" sx={{ color: "#3d2d1c", fontWeight: 800 }}>
-													Batch Craft Planner
-												</Typography>
-												<Typography variant="body2" color="text.secondary">
-													Direct recipe ingredients for the selected craft.
-												</Typography>
-											</Box>
-
-											<Stack direction={{ xs: "column", sm: "row" }} spacing={1.25}>
-												<TextField
-													label="Target Output"
-													type="number"
-													value={batchOutputCount}
-													onChange={(event) => {
-														const nextValue = Number(event.target.value)
-														setBatchOutputCount(Number.isFinite(nextValue) ? Math.max(1, Math.floor(nextValue)) : 1)
-														setShoppingListCopyMessage(null)
-													}}
-													size="small"
-													slotProps={{ htmlInput: { min: 1, step: 1 } }}
-													sx={{ minWidth: 150 }}
-												/>
-
-												<Button
-													variant="outlined"
-													onClick={() => void handleCopyShoppingList()}
-													sx={{
-														borderColor: accentColor,
-														color: accentColor,
-														minHeight: 40,
-														"&:hover": {
-															borderColor: "#8d5e25",
-															bgcolor: "rgba(165, 111, 44, 0.08)",
-														},
-													}}
-												>
-													Copy Shopping List
-												</Button>
-											</Stack>
-										</Stack>
-
-										<Box
-											sx={{
-												display: "grid",
-												gap: 1.25,
-												gridTemplateColumns: {
-													xs: "1fr",
-													sm: "repeat(2, minmax(0, 1fr))",
-													md: "repeat(4, minmax(0, 1fr))",
-												},
-												mb: 1.5,
-											}}
-										>
-											<Box sx={compactMetricSx}>
-												<Typography variant="caption" color="text.secondary">Recipe Runs</Typography>
-												<Typography sx={{ fontWeight: 750 }}>{formatNumber(shoppingPlan.recipeRuns)}</Typography>
-											</Box>
-											<Box sx={compactMetricSx}>
-												<Typography variant="caption" color="text.secondary">Planned Output</Typography>
-												<Typography sx={{ fontWeight: 750 }}>{formatNumber(shoppingPlan.plannedOutputCount)}</Typography>
-											</Box>
-											<Box sx={compactMetricSx}>
-												<Typography variant="caption" color="text.secondary">Owned Coverage</Typography>
-												<Typography sx={{ fontWeight: 750 }}>
-													{formatPercent(shoppingPlan.ownedCoverageRatio)}
-												</Typography>
-											</Box>
-											<Box sx={compactMetricSx}>
-												<Typography variant="caption" color="text.secondary">Out-of-pocket Cost</Typography>
-												<Typography sx={{ fontWeight: 750 }}>{formatCoins(shoppingPlan.outOfPocketCost)}</Typography>
-											</Box>
-											<Box sx={compactMetricSx}>
-												<Typography variant="caption" color="text.secondary">Out-of-pocket Profit</Typography>
-												<Typography
-													sx={{ color: signedValueColor(shoppingPlan.outOfPocketProfit), fontWeight: 750 }}
-												>
-													{formatCoins(shoppingPlan.outOfPocketProfit)}
-												</Typography>
-											</Box>
-											<Box sx={compactMetricSx}>
-												<Typography variant="caption" color="text.secondary">Market Craft Cost</Typography>
-												<Typography sx={{ fontWeight: 750 }}>{formatCoins(shoppingPlan.totalCraftCost)}</Typography>
-											</Box>
-											<Box sx={compactMetricSx}>
-												<Typography variant="caption" color="text.secondary">Market Profit</Typography>
-												<Typography
-													sx={{ color: signedValueColor(shoppingPlan.marketProfit), fontWeight: 750 }}
-												>
-													{formatCoins(shoppingPlan.marketProfit)}
-												</Typography>
-											</Box>
-											<Box sx={compactMetricSx}>
-												<Typography variant="caption" color="text.secondary">Net Sale</Typography>
-												<Typography sx={{ fontWeight: 750 }}>{formatCoins(shoppingPlan.totalNetSale)}</Typography>
-											</Box>
-										</Box>
-
-										{shoppingPlan.plannedExceedsInstantSellDepth && shoppingPlan.instantSellDepthLimit !== null && (
-											<Alert severity="warning" sx={{ mb: 1.5 }}>
-												Planned output exceeds profitable instant-sell depth of{" "}
-												{formatNumber(shoppingPlan.instantSellDepthLimit)}. Listing the output may still work, but
-												instant-selling this full batch is not supported by current buy orders.
-											</Alert>
-										)}
-
-										{shoppingPlan.hasUnavailablePrices && (
-											<Alert severity="warning" sx={{ mb: 1.5 }}>
-												Some missing ingredients do not have current buy prices, so out-of-pocket cost is incomplete.
-											</Alert>
-										)}
-
-										{shoppingListCopyMessage && (
-											<Alert severity="info" sx={{ mb: 1.5 }}>
-												{shoppingListCopyMessage}
-											</Alert>
-										)}
-
-										<TableContainer
-											component={Paper}
-											variant="outlined"
-											sx={{ borderColor: "rgba(98, 63, 24, 0.14)", maxHeight: 320 }}
-										>
-											<Table stickyHeader size="small" sx={{ minWidth: 900 }}>
-												<TableHead>
-													<TableRow>
-														<TableCell sx={tableHeaderCellSx}>Name</TableCell>
-														<TableCell align="right" sx={tableHeaderCellSx}>Required</TableCell>
-														<TableCell align="right" sx={tableHeaderCellSx}>Owned</TableCell>
-														<TableCell align="right" sx={tableHeaderCellSx}>Missing</TableCell>
-														<TableCell align="right" sx={tableHeaderCellSx}>Unit Buy</TableCell>
-														<TableCell align="right" sx={tableHeaderCellSx}>Missing Cost</TableCell>
-													</TableRow>
-												</TableHead>
-												<TableBody>
-													{shoppingPlan.rows.map((row) => (
-														<TableRow key={row.itemId} hover sx={zebraRowSx}>
-															<TableCell>{row.name}</TableCell>
-															<TableCell align="right">{formatNumber(row.requiredCount)}</TableCell>
-															<TableCell align="right">{formatNumber(row.ownedCount)}</TableCell>
-															<TableCell
-																align="right"
-																sx={{
-																	color: row.missingCount > 0 ? "warning.main" : "success.main",
-																	fontWeight: 700,
-																}}
-															>
-																{formatNumber(row.missingCount)}
-															</TableCell>
-															<TableCell align="right">{formatCoins(row.unitBuyPrice)}</TableCell>
-															<TableCell align="right">{formatCoins(row.missingBuyCost)}</TableCell>
-														</TableRow>
-													))}
-												</TableBody>
-											</Table>
-										</TableContainer>
+										<Typography variant="h6" sx={{ color: "#3d2d1c", fontWeight: 800 }}>
+											Price History
+										</Typography>
+										<Typography variant="body2" color="text.secondary">
+											Local snapshots recorded by manual and automatic price sync.
+										</Typography>
 									</Box>
 
-									<Divider />
-								</>
-							)}
+									<TextField
+										label="Range"
+										select
+										size="small"
+										value={priceHistoryRangeDays}
+										onChange={(event) => void handlePriceHistoryRangeChange(Number(event.target.value))}
+										disabled={priceHistoryLoading}
+										sx={{ minWidth: 150 }}
+									>
+										{priceHistoryRangeOptions.map((rangeDays) => (
+											<MenuItem key={rangeDays} value={rangeDays}>
+												{rangeDays === 1 ? "1 day" : `${rangeDays} days`}
+											</MenuItem>
+										))}
+									</TextField>
+								</Stack>
+
+								{priceHistoryError && (
+									<Alert severity="warning" sx={{ mb: 1.5 }}>
+										{priceHistoryError}
+									</Alert>
+								)}
+
+								{priceHistoryLoading && (
+									<Box sx={{ display: "flex", justifyContent: "center", py: 3 }}>
+										<CircularProgress size={24} />
+									</Box>
+								)}
+
+								{!priceHistoryLoading && priceHistory && (
+									<PriceHistoryChart
+										history={priceHistory}
+										onSyncPrices={() => void handleDataSync("prices")}
+										syncDisabled={loading || accountSyncing || syncInProgress !== null}
+										syncingPrices={syncInProgress === "prices"}
+									/>
+								)}
+							</Box>
+
+							<Divider />
+
+							<CraftPlanPanel key={`${selectedItem.item_id}:${selectedItem.snapshot_id}:${materialPricing}:${outputPricing}`}
+                                itemId={selectedItem.item_id} recipeId={selectedItem.recipe_id} accountId={accountId}
+                                accountName={profiles.find(profile => profile.id === accountId)?.display_name ?? "Market estimates"}
+                                materialPricing={materialPricing} outputPricing={outputPricing} eligibleOnly={eligibleOnly} />
 
 							<Box>
 								<Typography variant="h6" gutterBottom sx={{ color: "#3d2d1c", fontWeight: 800 }}>
 									Trading Post Market Depth
 								</Typography>
+                                <Typography variant="body2">Output depth assumes fixed material costs. Validate both purchases and sales with Refresh and check depth in the plan. Listings are not confirmed sales.</Typography>
 
 								{listingDepthError && (
 									<Alert severity="warning" sx={{ mb: 1.5 }}>
@@ -2460,13 +2730,13 @@ export default function ProfitableCraftsPage() {
 											<TableRow>
 												<TableCell sx={tableHeaderCellSx}>Materials</TableCell>
 												<TableCell sx={tableHeaderCellSx}>Output</TableCell>
-												<TableCell align="right" sx={tableHeaderCellSx}>Craft Cost</TableCell>
+												<TableCell align="right" sx={tableHeaderCellSx}>{eligibleOnly ? "Economic Cost" : "Craft Cost"}</TableCell>
 												<TableCell align="right" sx={tableHeaderCellSx}>Net Sale</TableCell>
 												<TableCell align="right" sx={tableHeaderCellSx}>Profit</TableCell>
 												<TableCell align="right" sx={tableHeaderCellSx}>ROI</TableCell>
-												<TableCell align="right" sx={tableHeaderCellSx}>Ingredient Value</TableCell>
+												<TableCell align="right" sx={tableHeaderCellSx}>{eligibleOnly ? "Owned Resale" : "Ingredient Value"}</TableCell>
 												<TableCell align="right" sx={tableHeaderCellSx}>Crafted Value</TableCell>
-												<TableCell align="right" sx={tableHeaderCellSx}>Value Add</TableCell>
+												<TableCell align="right" sx={tableHeaderCellSx}>{eligibleOnly ? "Gain vs Selling Stock" : "Value Add"}</TableCell>
 												<TableCell sx={tableHeaderCellSx}>Recommendation</TableCell>
 											</TableRow>
 										</TableHead>
@@ -2513,9 +2783,9 @@ export default function ProfitableCraftsPage() {
 
 							<Divider />
 
-							<Box>
+							<Box sx={{ display: eligibleOnly ? "none" : "block" }}>
 								<Typography variant="h6" gutterBottom sx={{ color: "#3d2d1c", fontWeight: 800 }}>
-									Ingredients
+									Ingredients for one run ({selectedItem.output_item_count} outputs)
 								</Typography>
 
 								<TableContainer
@@ -2530,7 +2800,7 @@ export default function ProfitableCraftsPage() {
 												<TableCell align="right" sx={tableHeaderCellSx}>Count</TableCell>
 												<TableCell align="right" sx={tableHeaderCellSx}>Owned</TableCell>
 												<TableCell align="right" sx={tableHeaderCellSx}>Missing</TableCell>
-												<TableCell align="right" sx={tableHeaderCellSx}>Buy Price</TableCell>
+												<TableCell align="right" sx={tableHeaderCellSx}>Purchase Price</TableCell>
 												<TableCell align="right" sx={tableHeaderCellSx}>Craft Price</TableCell>
 												<TableCell sx={tableHeaderCellSx}>Source</TableCell>
 												<TableCell align="right" sx={tableHeaderCellSx}>Chosen Unit</TableCell>
@@ -2552,7 +2822,7 @@ export default function ProfitableCraftsPage() {
 													>
 														{formatNumber(ingredient.missing_count)}
 													</TableCell>
-													<TableCell align="right">{formatCoins(ingredient.buy_price)}</TableCell>
+													<TableCell align="right">{formatCoins(ingredient.purchase_price)}</TableCell>
 													<TableCell align="right">{formatCoins(ingredient.craft_price)}</TableCell>
 													<TableCell>{ingredient.chosen_source}</TableCell>
 													<TableCell align="right">{formatCoins(ingredient.chosen_unit_cost)}</TableCell>

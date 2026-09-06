@@ -1,4 +1,4 @@
-from sqlalchemy import ForeignKey, Integer, Text
+from sqlalchemy import Boolean, ForeignKey, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -15,6 +15,11 @@ class Recipe(Base):
 	)
 	output_item_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 	disciplines: Mapped[str | None] = mapped_column(Text, nullable=True)
+	min_rating: Mapped[int | None] = mapped_column(Integer)
+	flags: Mapped[str | None] = mapped_column(Text)
+	recipe_type: Mapped[str | None] = mapped_column(Text)
+	ingredients_complete: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+	unsupported_reason: Mapped[str | None] = mapped_column(Text)
 
 	ingredients = relationship(
 		"RecipeIngredient",

@@ -69,15 +69,29 @@ class SyncService:
 				recipe.output_item_id = recipe_data["output_item_id"]
 				recipe.output_item_count = recipe_data.get("output_item_count", 1)
 				recipe.disciplines = json.dumps(recipe_data.get("disciplines", []))
+				recipe.min_rating = recipe_data.get("min_rating")
+				recipe.flags = json.dumps(recipe_data.get("flags", []))
+				recipe.recipe_type = recipe_data.get("type")
+				recipe.ingredients_complete = True
+				recipe.unsupported_reason = None
+				if recipe_data.get("guild_ingredients") or recipe_data.get("output_upgrade_id"):
+					recipe.unsupported_reason = "Guild ingredients or outputs are not supported."
 
 				self.db.query(RecipeIngredient).filter(
 					RecipeIngredient.recipe_id == recipe.id
 				).delete()
 
 				for ingredient_data in recipe_data.get("ingredients", []):
+					if ingredient_data.get("type", "Item") != "Item":
+						recipe.unsupported_reason = "Non-item ingredients require acquisition and valuation support."
+						continue
+					ingredient_id = ingredient_data.get("item_id", ingredient_data.get("id"))
+					if type(ingredient_id) is not int or ingredient_id <= 0 or type(ingredient_data.get("count")) is not int or ingredient_data["count"] <= 0:
+						recipe.ingredients_complete = False
+						continue
 					ingredient = RecipeIngredient(
 						recipe_id=recipe.id,
-						item_id=ingredient_data["item_id"],
+						item_id=ingredient_id,
 						count=ingredient_data["count"],
 					)
 					self.db.add(ingredient)

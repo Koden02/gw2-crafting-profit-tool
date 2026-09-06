@@ -1,5 +1,15 @@
 # GW2 Craft Profit Tool – Project Plan
 
+## Current direction
+
+Answer what the selected account can craft profitably, what to buy, how much to craft,
+and whether crafting beats selling its materials, accounting for reservations and
+budget. Account isolation and reliable quantity quotes now provide the prerequisite;
+crafting eligibility, simple reservations and account-aware ranking are implemented
+for direct API data and bank/material stock. Broader inventory/import support remains next. See
+[the current roadmap](IMPLEMENTATION_ORDER.md) and [account quote contracts](ACCOUNT_QUOTES.md).
+The remaining sections preserve the original broader project plan.
+
 ## Overview
 
 This project aims to create a **local application that analyzes Guild Wars 2 crafting recipes to determine profitable items to craft and sell on the Trading Post.**

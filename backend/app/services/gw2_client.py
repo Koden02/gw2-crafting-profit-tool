@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -44,7 +45,7 @@ class GW2Client:
 			return []
 
 		ids_param = ",".join(str(recipe_id) for recipe_id in recipe_ids)
-		return self._get("/v2/recipes", params={"ids": ids_param})
+		return self._get("/v2/recipes", params={"ids": ids_param, "v": "latest"})
 
 	def fetch_commerce_prices_by_ids(self, item_ids: list[int]) -> list[dict[str, Any]]:
 		if not item_ids:
@@ -62,5 +63,20 @@ class GW2Client:
 	def fetch_account_materials(self, api_key: str) -> list[dict[str, Any]]:
 		return self._get("/v2/account/materials", headers=self._auth_headers(api_key))
 
+	def fetch_account(self, api_key: str) -> dict[str, Any]:
+		return self._get("/v2/account", headers=self._auth_headers(api_key))
+
 	def fetch_account_bank(self, api_key: str) -> list[dict[str, Any] | None]:
 		return self._get("/v2/account/bank", headers=self._auth_headers(api_key))
+
+	def fetch_character_names(self, api_key: str) -> list[str]:
+		return self._get("/v2/characters", headers=self._auth_headers(api_key))
+
+	def fetch_character_crafting(self, api_key: str, name: str) -> dict:
+		return self._get(f"/v2/characters/{quote(name, safe='')}/crafting", headers=self._auth_headers(api_key))
+
+	def fetch_character_recipes(self, api_key: str, name: str) -> dict:
+		return self._get(f"/v2/characters/{quote(name, safe='')}/recipes", headers=self._auth_headers(api_key))
+
+	def fetch_account_recipes(self, api_key: str) -> list[int]:
+		return self._get("/v2/account/recipes", headers=self._auth_headers(api_key))

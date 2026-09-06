@@ -18,6 +18,8 @@ from app.models.recipe_ingredient import RecipeIngredient
 
 SnapshotItemMode = Literal["relevant", "all"]
 RelevanceFilter = Literal["all", "relevant", "ignored", "untracked"]
+HistoryResolution = Literal["auto", "raw", "hour", "day"]
+ResolvedHistoryResolution = Literal["raw", "hour", "day"]
 
 SNAPSHOT_ROW_ESTIMATED_BYTES = 180
 ROLLUP_ROW_ESTIMATED_BYTES = 220
@@ -286,6 +288,46 @@ class PriceHistoryService:
 			"max_history_mb": int(config["max_history_mb"]),
 			"snapshot_row_estimated_bytes": SNAPSHOT_ROW_ESTIMATED_BYTES,
 			"rollup_row_estimated_bytes": ROLLUP_ROW_ESTIMATED_BYTES,
+		}
+
+	def get_item_price_history(
+		self,
+		item_id: int,
+		range_days: int = 7,
+		resolution: HistoryResolution = "auto",
+	) -> dict[str, Any] | None:
+		item = self.db.get(Item, item_id)
+		if item is None:
+			return None
+
+		config = self.get_config()
+		bounded_range_days = min(max(int(range_days), 1), 3650)
+		resolved_resolution = self._resolve_history_resolution(
+			range_days=bounded_range_days,
+			resolution=resolution,
+			config=config,
+		)
+		end_at = utc_now()
+		start_at = end_at - timedelta(days=bounded_range_days)
+
+		if resolved_resolution == "raw":
+			points = self._raw_history_points(item_id=item_id, start_at=start_at)
+		else:
+			points = self._rollup_history_points(
+				item_id=item_id,
+				start_at=start_at,
+				bucket_type=resolved_resolution,
+			)
+
+		return {
+			"item_id": item.id,
+			"name": item.name,
+			"resolution": resolved_resolution,
+			"range_days": bounded_range_days,
+			"start_at": start_at,
+			"end_at": end_at,
+			"point_count": len(points),
+			"points": points,
 		}
 
 	def list_item_relevance(
@@ -567,6 +609,83 @@ class PriceHistoryService:
 			{"bucket_type": table_kind, "limit": limit},
 		)
 		return max(result.rowcount or 0, 0)
+
+	def _raw_history_points(self, item_id: int, start_at: datetime) -> list[dict[str, Any]]:
+		rows = (
+			self.db.query(CommercePriceSnapshot)
+			.filter(
+				CommercePriceSnapshot.item_id == item_id,
+				CommercePriceSnapshot.observed_at >= start_at,
+			)
+			.order_by(CommercePriceSnapshot.observed_at.asc())
+			.all()
+		)
+
+		return [
+			{
+				"observed_at": normalize_datetime(row.observed_at),
+				"buy_price": row.buy_price,
+				"buy_price_min": row.buy_price,
+				"buy_price_max": row.buy_price,
+				"buy_quantity": row.buy_quantity,
+				"sell_price": row.sell_price,
+				"sell_price_min": row.sell_price,
+				"sell_price_max": row.sell_price,
+				"sell_quantity": row.sell_quantity,
+				"sample_count": 1,
+			}
+			for row in rows
+		]
+
+	def _rollup_history_points(
+		self,
+		item_id: int,
+		start_at: datetime,
+		bucket_type: ResolvedHistoryResolution,
+	) -> list[dict[str, Any]]:
+		rows = (
+			self.db.query(CommercePriceRollup)
+			.filter(
+				CommercePriceRollup.item_id == item_id,
+				CommercePriceRollup.bucket_type == bucket_type,
+				CommercePriceRollup.bucket_start >= start_at,
+			)
+			.order_by(CommercePriceRollup.bucket_start.asc())
+			.all()
+		)
+
+		return [
+			{
+				"observed_at": normalize_datetime(row.bucket_start),
+				"buy_price": row.buy_price_avg,
+				"buy_price_min": row.buy_price_min,
+				"buy_price_max": row.buy_price_max,
+				"buy_quantity": row.buy_quantity_avg,
+				"sell_price": row.sell_price_avg,
+				"sell_price_min": row.sell_price_min,
+				"sell_price_max": row.sell_price_max,
+				"sell_quantity": row.sell_quantity_avg,
+				"sample_count": row.sample_count,
+			}
+			for row in rows
+		]
+
+	def _resolve_history_resolution(
+		self,
+		range_days: int,
+		resolution: HistoryResolution,
+		config: dict[str, int | bool | str],
+	) -> ResolvedHistoryResolution:
+		if resolution != "auto":
+			return resolution
+
+		if range_days <= int(config["raw_snapshot_retention_days"]):
+			return "raw"
+
+		if range_days <= int(config["hourly_rollup_retention_days"]):
+			return "hour"
+
+		return "day"
 
 	def _coerce_config_value(self, key: str, value: str) -> int | bool | str:
 		if key == "auto_price_sync_enabled":

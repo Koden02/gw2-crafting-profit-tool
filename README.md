@@ -5,13 +5,15 @@
 ![React](https://img.shields.io/badge/React-frontend-blue)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 ![Status](https://img.shields.io/badge/status-early%20development-orange)
-![Version](https://img.shields.io/badge/version-0.1.12-blue)
+![Version](https://img.shields.io/badge/version-0.2.0-blue)
 
 GW2 Craft Profit Tool is a local full-stack app for analyzing Guild Wars 2 crafting profitability using the official Guild Wars 2 API, SQLite, recursive recipe costing, and Trading Post prices.
 
-Project status: Early Development v0.1.12.
+Project status: Early Development v0.2.0, with local account isolation, reliable quotes, crafting eligibility and reservations.
 
-The v0.1.12 release is focused on local data sync, automatic server-side price refresh, configurable local price history snapshots and rollups, dedicated options and tracked-item review pages, sync overlap protection, craft profitability analysis, pricing assumptions, Trading Post depth visibility, table-level risk signals, owned-material adjusted batch planning, saved filters, watchlists, endpoint smoke coverage, and a usable frontend for browsing profitable crafts. Full inventory-aware table ranking, historical price charting, and packaging are planned future work.
+See [account quotes and upgrade instructions](docs/ACCOUNT_QUOTES.md). Pause automatic price sync, back up the database, restart the backend, and refresh recipes and prices sequentially before syncing an explicitly selected account. Resume automatic price sync afterward. Legacy holdings remain preserved with an unknown owner and are excluded from plans.
+
+The v0.2.0 release starts the historical price analysis track with per-item price history reads and item drawer charts over locally recorded price snapshots and rollups. The app also includes local data sync, automatic server-side price refresh, configurable snapshot retention, dedicated options and tracked-item review pages, sync overlap protection, craft profitability analysis, Trading Post depth visibility, table-level risk signals, owned-material adjusted batch planning, saved filters, watchlists, endpoint smoke coverage, and a usable frontend for browsing profitable crafts. Selected-account results now verify character crafting levels and recipe eligibility, exclude reserved bank/material stock, and rank by gain after valuing consumed stock. JSON import, other inventories, automatic quantity suggestions, full cooldown/non-TP support, trend scoring and packaging remain future work. Quotes still depend on the stated market assumptions.
 
 ## Implemented Features
 
@@ -26,6 +28,10 @@ The v0.1.12 release is focused on local data sync, automatic server-side price r
   - `output_pricing=sell`: value crafted output at list-sell prices.
   - `output_pricing=buy`: value crafted output at instant-sell prices.
 - Liquidity and suspicious spread filters.
+- Snapshot-based market flow scoring:
+  - moving, slow, stalled, or unknown labels
+  - stalled-market filtering
+  - ROI summary informed by listing activity (not confirmed sales)
 - On-demand Trading Post listing-depth analysis:
   - break-even sale price
   - profitable instant-sell depth
@@ -40,6 +46,8 @@ The v0.1.12 release is focused on local data sync, automatic server-side price r
   - storage estimates based on tracked item count
   - relevant-only or all-priced-item snapshot modes
   - ignored-item controls for excluding unwanted items from future snapshots
+  - read-only per-item price history endpoint
+  - table indicators for items with recorded local history
 - Craft vs sell ingredients comparison:
   - `ingredient_sale_value`
   - `crafted_item_value`
@@ -58,10 +66,17 @@ The v0.1.12 release is focused on local data sync, automatic server-side price r
   - frontend sync controls for items, recipes, and Trading Post prices
   - dedicated options page for automatic price-history status, retention, estimates, and explanations
   - dedicated tracked-items page for relevance review and ignore controls
-  - read-only account holdings sync for material storage and bank inventory
+  - account data sync for bank/material inventory, active character crafting levels and recipe unlocks
+  - eligible-crafts filter with named crafters for root/intermediate steps and explicit missing/stale coverage
+  - account-scoped material reservations that survive syncs and reduce usable stock once
   - batch craft planner with missing-material shopping list
-  - out-of-pocket batch profit and owned-material coverage in the planner
+  - separate purchase cost, upfront gold, cash surplus and economic gain after valuing consumed owned stock
+  - account selection and account-scoped holdings, watchlists and saved filters
+  - backend whole-batch plans, recipe alternatives, cycle protection and shared ingredient/leftover allocation
+  - optional material and output depth checks, budget checks and stale-data warnings
   - Trading Post market-depth view in the item detail drawer
+  - local price history chart in the item detail drawer
+  - empty-history sync action and rollup min/max range markers
   - summary cards
   - formatted coin values
   - recommendation chips
@@ -256,11 +271,11 @@ npm run lint
 
 ## Current Limitations
 
-Not implemented in v0.1.12:
+Not implemented in v0.2.0:
 
 - Full inventory-aware table ranking.
-- Historical price charts and trend scoring.
-- Price stability scoring.
+- Trend scoring and price stability scoring.
+- Historical order-book velocity.
 - Docker or packaged desktop distribution.
 
 ## Documentation

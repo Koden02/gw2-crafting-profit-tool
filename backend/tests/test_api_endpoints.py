@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 from app.db.base import Base
 from app.db.dependencies import get_db
 from app.main import app
-from app.models import AccountHolding, CommercePrice, CommercePriceRollup, CommercePriceSnapshot, Item, Recipe, RecipeIngredient
+from app.models import AccountProfile, AccountHolding, CommercePrice, CommercePriceRollup, CommercePriceSnapshot, Item, Recipe, RecipeIngredient
 from app.services.gw2_client import GW2Client
 from app.services.price_history_service import PriceHistoryService
 from app.services.price_sync_lock import price_sync_lock
@@ -159,6 +159,9 @@ def test_profit_detail_endpoint_returns_calculated_profit(
 	assert body["profit"] == 500
 	assert body["value_add"] == 330
 	assert body["recommendation"] == "Craft"
+	assert body["has_price_history"] is False
+	assert body["market_flow_status"] == "unknown"
+	assert body["market_flow_score"] is None
 	assert len(body["ingredients"]) == 2
 
 
@@ -193,6 +196,135 @@ def test_profitable_crafts_endpoint_returns_seeded_recipe(
 	assert len(rows) == 1
 	assert rows[0]["item_id"] == 1
 	assert rows[0]["profit"] == 500
+	assert rows[0]["has_price_history"] is False
+	assert rows[0]["market_flow_status"] == "unknown"
+
+
+def test_profitable_crafts_endpoint_marks_recorded_price_history(
+	client: TestClient,
+	db_session: Session,
+) -> None:
+	seed_simple_recipe(db_session)
+	db_session.add(
+		CommercePriceSnapshot(
+			item_id=1,
+			observed_at=datetime.now(timezone.utc),
+			buy_price=500,
+			buy_quantity=10,
+			sell_price=1000,
+			sell_quantity=20,
+		)
+	)
+	db_session.commit()
+
+	response = client.get("/api/profitable-crafts", params={"limit": 5, "min_profit": 0})
+
+	assert response.status_code == 200
+	rows = response.json()
+	assert len(rows) == 1
+	assert rows[0]["has_price_history"] is True
+
+
+def test_profitable_crafts_endpoint_reports_moving_market_flow(
+	client: TestClient,
+	db_session: Session,
+) -> None:
+	seed_simple_recipe(db_session)
+	now = datetime.now(timezone.utc).replace(microsecond=0)
+	db_session.add_all(
+		[
+			CommercePriceSnapshot(
+				item_id=1,
+				observed_at=now - timedelta(hours=3),
+				buy_price=500,
+				buy_quantity=10,
+				sell_price=1000,
+				sell_quantity=20,
+			),
+			CommercePriceSnapshot(
+				item_id=1,
+				observed_at=now - timedelta(hours=2),
+				buy_price=500,
+				buy_quantity=12,
+				sell_price=1000,
+				sell_quantity=17,
+			),
+			CommercePriceSnapshot(
+				item_id=1,
+				observed_at=now - timedelta(hours=1),
+				buy_price=500,
+				buy_quantity=12,
+				sell_price=1000,
+				sell_quantity=15,
+			),
+			CommercePriceSnapshot(
+				item_id=1,
+				observed_at=now,
+				buy_price=500,
+				buy_quantity=15,
+				sell_price=1000,
+				sell_quantity=12,
+			),
+		]
+	)
+	db_session.commit()
+
+	response = client.get("/api/profitable-crafts", params={"limit": 5, "min_profit": 0})
+
+	assert response.status_code == 200
+	row = response.json()[0]
+	assert row["market_flow_status"] == "moving"
+	assert row["market_flow_score"] > 0
+	assert row["market_flow_observations"] == 4
+	assert row["market_flow_quantity_change_count"] == 3
+
+
+def test_profitable_crafts_endpoint_can_exclude_stalled_market_flow(
+	client: TestClient,
+	db_session: Session,
+) -> None:
+	seed_simple_recipe(db_session)
+	now = datetime.now(timezone.utc).replace(microsecond=0)
+	db_session.add_all(
+		[
+			CommercePriceSnapshot(
+				item_id=1,
+				observed_at=now - timedelta(hours=2),
+				buy_price=500,
+				buy_quantity=10,
+				sell_price=1000,
+				sell_quantity=20,
+			),
+			CommercePriceSnapshot(
+				item_id=1,
+				observed_at=now - timedelta(hours=1),
+				buy_price=500,
+				buy_quantity=10,
+				sell_price=1000,
+				sell_quantity=20,
+			),
+			CommercePriceSnapshot(
+				item_id=1,
+				observed_at=now,
+				buy_price=500,
+				buy_quantity=10,
+				sell_price=1000,
+				sell_quantity=20,
+			),
+		]
+	)
+	db_session.commit()
+
+	included_response = client.get("/api/profitable-crafts", params={"limit": 5, "min_profit": 0})
+	excluded_response = client.get(
+		"/api/profitable-crafts",
+		params={"limit": 5, "min_profit": 0, "exclude_stalled_markets": True},
+	)
+
+	assert included_response.status_code == 200
+	assert included_response.json()[0]["market_flow_status"] == "stalled"
+	assert excluded_response.status_code == 200
+	assert excluded_response.json() == []
 
 
 def test_listing_depth_endpoint_uses_gw2_listing_data(
@@ -372,6 +504,102 @@ def test_price_history_relevance_and_ignore_controls(
 	assert restored_estimate_response.json()["tracked_item_count"] == 3
 
 
+def test_price_history_endpoint_returns_raw_snapshots(
+	client: TestClient,
+	db_session: Session,
+) -> None:
+	seed_simple_recipe(db_session)
+	now = datetime.now(timezone.utc).replace(microsecond=0)
+	db_session.add_all(
+		[
+			CommercePriceSnapshot(
+				item_id=1,
+				observed_at=now - timedelta(hours=2),
+				buy_price=490,
+				buy_quantity=8,
+				sell_price=980,
+				sell_quantity=18,
+			),
+			CommercePriceSnapshot(
+				item_id=1,
+				observed_at=now - timedelta(hours=1),
+				buy_price=510,
+				buy_quantity=12,
+				sell_price=1020,
+				sell_quantity=22,
+			),
+		]
+	)
+	db_session.commit()
+
+	response = client.get(
+		"/api/price-history/1",
+		params={"range_days": 7, "resolution": "raw"},
+	)
+
+	assert response.status_code == 200
+	body = response.json()
+	assert body["item_id"] == 1
+	assert body["name"] == "Test Output"
+	assert body["resolution"] == "raw"
+	assert body["range_days"] == 7
+	assert body["point_count"] == 2
+	assert [point["sell_price"] for point in body["points"]] == [980, 1020]
+	assert body["points"][0]["sample_count"] == 1
+
+
+def test_price_history_endpoint_returns_rollup_points(
+	client: TestClient,
+	db_session: Session,
+) -> None:
+	seed_simple_recipe(db_session)
+	now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+	db_session.add(
+		CommercePriceRollup(
+			item_id=1,
+			bucket_type="hour",
+			bucket_start=now - timedelta(days=3),
+			sample_count=4,
+			buy_price_min=480,
+			buy_price_avg=500.5,
+			buy_price_max=520,
+			sell_price_min=980,
+			sell_price_avg=1000.5,
+			sell_price_max=1040,
+			buy_quantity_avg=9.5,
+			sell_quantity_avg=19.5,
+			created_at=now,
+		)
+	)
+	db_session.commit()
+
+	response = client.get(
+		"/api/price-history/1",
+		params={"range_days": 30, "resolution": "hour"},
+	)
+
+	assert response.status_code == 200
+	body = response.json()
+	assert body["resolution"] == "hour"
+	assert body["point_count"] == 1
+	point = body["points"][0]
+	assert point["sample_count"] == 4
+	assert point["buy_price"] == pytest.approx(500.5)
+	assert point["buy_price_min"] == 480
+	assert point["buy_price_max"] == 520
+	assert point["sell_price"] == pytest.approx(1000.5)
+	assert point["sell_quantity"] == pytest.approx(19.5)
+
+
+def test_price_history_endpoint_returns_not_found_for_unknown_item(
+	client: TestClient,
+) -> None:
+	response = client.get("/api/price-history/999999")
+
+	assert response.status_code == 404
+	assert response.json()["detail"] == "Item not found"
+
+
 def test_price_history_config_persists_across_service_instances(db_session: Session) -> None:
 	service = PriceHistoryService(db_session)
 	service.update_config(
@@ -494,8 +722,10 @@ def test_account_holdings_status_endpoint_reports_owned_totals(
 	client: TestClient,
 	db_session: Session,
 ) -> None:
+	db_session.add(AccountProfile(id="A", display_name="A", verified=True, last_updated=datetime.now(timezone.utc)))
 	db_session.add(
 		AccountHolding(
+			account_id="A",
 			item_id=2,
 			material_count=3,
 			bank_count=4,
@@ -505,10 +735,80 @@ def test_account_holdings_status_endpoint_reports_owned_totals(
 	)
 	db_session.commit()
 
-	response = client.get("/api/account/holdings/status")
+	response = client.get("/api/account/holdings/status", params={"account_id": "A"})
 
 	assert response.status_code == 200
 	body = response.json()
 	assert body["holding_count"] == 1
 	assert body["total_owned"] == 7
 	assert body["last_updated"] is not None
+
+def test_plan_api_account_scope_and_validation(client, db_session):
+    from app.models import AccountProfile
+    seed_simple_recipe(db_session)
+    for account, count in [("A", 1), ("B", 4)]:
+        db_session.add(AccountProfile(id=account, display_name=account, verified=True,
+                                      last_updated=datetime.now(timezone.utc), snapshot_id=account))
+        db_session.add(AccountHolding(account_id=account, item_id=2, total_count=count,
+                                      usable_count=count, material_count=count, bank_count=0,
+                                      last_updated=datetime.now(timezone.utc)))
+    db_session.commit()
+    a = client.get("/api/profit/1/plan", params={"account_id": "A", "eligible_only": False}).json()
+    b = client.get("/api/profit/1/plan", params={"account_id": "B", "eligible_only": False}).json()
+    assert a["purchase_cost"] == 250
+    assert b["purchase_cost"] == 150
+    assert a["account_id"] == a["snapshot_id"] == "A"
+    assert client.get("/api/account/holdings/status").status_code == 422
+    assert client.get("/api/profit/1/plan", params={"quantity": 0}).status_code == 422
+    assert client.get("/api/profit/1/plan", params={"budget": -1}).status_code == 422
+    assert client.get("/api/profit/1", params={"output_pricing": "wrong"}).status_code == 422
+    for path in ["/api/profit/1/plan", "/api/profit/1", "/api/profitable-crafts", "/api/profit/1/scenarios"]:
+        assert client.get(path, params={"account_id": "unknown"}).status_code == 404
+    assert client.get("/api/profit/1/plan").json()["consumed"] == []
+
+
+def test_table_detail_and_plan_same_recipe_and_scenario(client, db_session):
+    seed_simple_recipe(db_session)
+    add_recipe(db_session, 2, 1, [(2, 1)])
+    db_session.commit()
+    for materials, output in [("buy", "buy"), ("buy", "sell"), ("sell", "buy"), ("sell", "sell")]:
+        params = {"material_pricing": materials, "output_pricing": output}
+        table = client.get("/api/profitable-crafts", params=params).json()[0]
+        detail = client.get("/api/profit/1", params=params).json()
+        plan = client.get("/api/profit/1/plan", params=params).json()
+        assert table["recipe_id"] == detail["recipe_id"] == plan["recipe_id"]
+        assert table["craft_cost"] == detail["craft_cost"] == plan["purchase_cost"]
+        assert table["net_sale"] == detail["net_sale"] == plan["net_revenue"]
+
+
+def test_selected_recipe_stays_consistent_across_api_views(client, db_session, monkeypatch):
+    seed_simple_recipe(db_session)
+    add_recipe(db_session, 99, 1, [(2, 1)])
+    db_session.commit()
+    params = {"recipe_id": 1, "material_pricing": "sell"}
+    detail = client.get("/api/profit/1", params=params).json()
+    plan = client.get("/api/profit/1/plan", params=params).json()
+    scenarios = client.get("/api/profit/1/scenarios", params=params).json()
+    assert detail["recipe_id"] == plan["recipe_id"] == 1
+    assert detail["craft_cost"] == plan["purchase_cost"] == 610
+    assert all(s["recipe_id"] == 1 for s in scenarios)
+    assert sum(i["total_cost"] for i in detail["ingredients"]) == 610
+    assert detail["ingredients"][0]["purchase_price"] == 200
+    from app.services.gw2_client import GW2Client
+    monkeypatch.setattr(GW2Client, "fetch_commerce_listing", lambda self, item_id: {
+        "buys": [{"unit_price": 1000, "quantity": 10}], "sells": []})
+    depth = client.get("/api/profit/1/listing-depth", params=params).json()
+    assert depth["craft_cost"] == 610
+    assert client.get("/api/profit/1", params={"recipe_id": 999}).status_code == 404
+
+
+def test_cached_status_timestamps_are_explicit_utc(client, db_session):
+    seed_simple_recipe(db_session)
+    db_session.add(AccountProfile(id="A", display_name="A", verified=True,
+                                  last_updated=datetime(2026, 9, 5, 15, 0)))
+    db_session.commit()
+    def utc(value):
+        return value.endswith("Z") or value.endswith("+00:00")
+    assert utc(client.get("/api/sync/status").json()["price_last_updated"])
+    assert utc(client.get("/api/account/holdings/status?account_id=A").json()["last_updated"])
+    assert utc(client.get("/api/account/profiles").json()[0]["last_updated"])

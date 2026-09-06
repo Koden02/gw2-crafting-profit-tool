@@ -7,11 +7,24 @@ export type IngredientBreakdown = {
 	buy_price: number | null
 	craft_price: number | null
 	chosen_source: string
+	purchase_price: number | null
 	chosen_unit_cost: number | null
 	total_cost: number | null
 }
 
+export type EligibleCharacter = { name: string; discipline: string; rating: number; unlock_source: string }
+
 export type ProfitableCraft = {
+    eligibility: string
+    quote_basis: "account" | "market"
+    reservation_revision: number | null
+    eligible_characters: EligibleCharacter[]
+	recipe_id: number
+	account_id: string | null
+	snapshot_id: string | null
+	material_pricing: MaterialPricingMode
+	output_pricing: OutputPricingMode
+	quote_issues: string[]
 	item_id: number
 	name: string
 	disciplines: string[]
@@ -28,9 +41,17 @@ export type ProfitableCraft = {
 	spread_ratio: number | null
 	low_liquidity: boolean
 	suspicious_spread: boolean
-	ingredient_sale_value: number
+	has_price_history: boolean
+	market_flow_status: "unknown" | "stalled" | "slow" | "moving"
+	market_flow_score: number | null
+	market_flow_observations: number
+	market_flow_window_hours: number
+	market_flow_quantity_change_count: number
+	market_flow_price_change_count: number
+	market_flow_summary: string
+	ingredient_sale_value: number | null
 	crafted_item_value: number
-	value_add: number
+	value_add: number | null
 	recommendation: string
 	ingredients?: IngredientBreakdown[]
 }
@@ -146,6 +167,32 @@ export type PriceHistoryRelevanceResponse = {
 	search: string
 }
 
+export type PriceHistoryResolution = "auto" | "raw" | "hour" | "day"
+
+export type PriceHistoryPoint = {
+	observed_at: string
+	buy_price: number | null
+	buy_price_min: number | null
+	buy_price_max: number | null
+	buy_quantity: number | null
+	sell_price: number | null
+	sell_price_min: number | null
+	sell_price_max: number | null
+	sell_quantity: number | null
+	sample_count: number
+}
+
+export type PriceHistoryResponse = {
+	item_id: number
+	name: string
+	resolution: Exclude<PriceHistoryResolution, "auto">
+	range_days: number
+	start_at: string
+	end_at: string
+	point_count: number
+	points: PriceHistoryPoint[]
+}
+
 export type PriceSyncResult = {
 	status: string
 	prices_upserted: number
@@ -167,6 +214,8 @@ export type RecipeSyncResult = {
 }
 
 export type AccountHoldingsSyncResult = {
+	account_id: string
+	snapshot_id: string
 	status: string
 	material_items: number
 	bank_items: number
@@ -176,30 +225,37 @@ export type AccountHoldingsSyncResult = {
 }
 
 export type AccountHoldingsStatus = {
+	account_id: string
+	snapshot_id: string | null
 	holding_count: number
 	total_owned: number
 	last_updated: string | null
 }
 
 export type ProfitableCraftQuery = {
+	eligible_only?: boolean
+	account_id?: string
 	limit?: number
 	min_profit?: number
 	min_buy_quantity?: number
 	min_sell_quantity?: number
 	exclude_low_liquidity?: boolean
 	exclude_suspicious_spread?: boolean
+	exclude_stalled_markets?: boolean
 	discipline?: string
 	material_pricing?: MaterialPricingMode
 	output_pricing?: OutputPricingMode
 }
 
-const API_BASE_URL = "http://127.0.0.1:8000"
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000"
 
 export async function fetchProfitableCrafts(
 	query: ProfitableCraftQuery = {},
 ): Promise<ProfitableCraft[]> {
 	const params = new URLSearchParams()
 
+	if (query.account_id) params.set("account_id", query.account_id)
+	if (query.eligible_only !== undefined) params.set("eligible_only", String(query.eligible_only))
 	if (query.limit !== undefined) params.set("limit", String(query.limit))
 	if (query.min_profit !== undefined) params.set("min_profit", String(query.min_profit))
 	if (query.min_buy_quantity !== undefined) params.set("min_buy_quantity", String(query.min_buy_quantity))
@@ -209,6 +265,9 @@ export async function fetchProfitableCrafts(
 	}
 	if (query.exclude_suspicious_spread !== undefined) {
 		params.set("exclude_suspicious_spread", String(query.exclude_suspicious_spread))
+	}
+	if (query.exclude_stalled_markets !== undefined) {
+		params.set("exclude_stalled_markets", String(query.exclude_stalled_markets))
 	}
 	if (query.discipline) params.set("discipline", query.discipline)
 	if (query.material_pricing) params.set("material_pricing", query.material_pricing)
@@ -226,11 +285,17 @@ export async function fetchProfitableCrafts(
 export async function fetchProfitDetail(
 	itemId: number,
 	options?: {
+		eligible_only?: boolean
+		recipe_id?: number
+		account_id?: string
 		material_pricing?: MaterialPricingMode
 		output_pricing?: OutputPricingMode
 	},
 ): Promise<ProfitableCraft> {
 	const params = new URLSearchParams()
+	if (options?.eligible_only !== undefined) params.set("eligible_only", String(options.eligible_only))
+	if (options?.recipe_id !== undefined) params.set("recipe_id", String(options.recipe_id))
+	if (options?.account_id) params.set("account_id", options.account_id)
 
 	if (options?.material_pricing) {
 		params.set("material_pricing", options.material_pricing)
@@ -250,8 +315,12 @@ export async function fetchProfitDetail(
 	return response.json()
 }
 
-export async function fetchProfitScenarios(itemId: number): Promise<ProfitScenario[]> {
-	const response = await fetch(`${API_BASE_URL}/api/profit/${itemId}/scenarios`)
+export async function fetchProfitScenarios(itemId: number, accountId?: string, recipeId?: number, eligibleOnly = false): Promise<ProfitScenario[]> {
+	const params = new URLSearchParams()
+	if (accountId) params.set("account_id", accountId)
+	params.set("eligible_only", String(eligibleOnly))
+	if (recipeId !== undefined) params.set("recipe_id", String(recipeId))
+	const response = await fetch(`${API_BASE_URL}/api/profit/${itemId}/scenarios?${params}`)
 
 	if (!response.ok) {
 		throw new Error(`Failed to fetch profit scenarios: ${response.status}`)
@@ -263,10 +332,18 @@ export async function fetchProfitScenarios(itemId: number): Promise<ProfitScenar
 export async function fetchListingDepth(
 	itemId: number,
 	options?: {
+		account_id?: string
+		eligible_only?: boolean
+		recipe_id?: number
 		material_pricing?: MaterialPricingMode
+		output_pricing?: OutputPricingMode
 	},
 ): Promise<ListingDepthAnalysis> {
 	const params = new URLSearchParams()
+	if (options?.output_pricing) params.set("output_pricing", options.output_pricing)
+	if (options?.account_id) params.set("account_id", options.account_id)
+	if (options?.eligible_only !== undefined) params.set("eligible_only", String(options.eligible_only))
+	if (options?.recipe_id !== undefined) params.set("recipe_id", String(options.recipe_id))
 
 	if (options?.material_pricing) {
 		params.set("material_pricing", options.material_pricing)
@@ -278,6 +355,35 @@ export async function fetchListingDepth(
 	if (!response.ok) {
 		const detail = await response.json().catch(() => null)
 		const message = typeof detail?.detail === "string" ? detail.detail : `Failed to fetch listing depth: ${response.status}`
+		throw new Error(message)
+	}
+
+	return response.json()
+}
+
+export async function fetchPriceHistory(
+	itemId: number,
+	options: {
+		range_days?: number
+		resolution?: PriceHistoryResolution
+	} = {},
+): Promise<PriceHistoryResponse> {
+	const params = new URLSearchParams()
+
+	if (options.range_days !== undefined) {
+		params.set("range_days", String(options.range_days))
+	}
+
+	if (options.resolution !== undefined) {
+		params.set("resolution", options.resolution)
+	}
+
+	const suffix = params.toString() ? `?${params.toString()}` : ""
+	const response = await fetch(`${API_BASE_URL}/api/price-history/${itemId}${suffix}`)
+
+	if (!response.ok) {
+		const detail = await response.json().catch(() => null)
+		const message = typeof detail?.detail === "string" ? detail.detail : `Failed to fetch price history: ${response.status}`
 		throw new Error(message)
 	}
 
@@ -454,13 +560,13 @@ export async function syncRecipes(): Promise<RecipeSyncResult> {
 	return response.json()
 }
 
-export async function syncAccountHoldings(apiKey: string): Promise<AccountHoldingsSyncResult> {
+export async function syncAccountHoldings(apiKey: string, accountId?: string): Promise<AccountHoldingsSyncResult> {
 	const response = await fetch(`${API_BASE_URL}/api/account/sync/holdings`, {
 		method: "POST",
 		headers: {
 			"Content-Type": "application/json",
 		},
-		body: JSON.stringify({ api_key: apiKey }),
+		body: JSON.stringify({ api_key: apiKey, account_id: accountId, include_crafting: true }),
 	})
 
 	if (!response.ok) {
@@ -472,12 +578,107 @@ export async function syncAccountHoldings(apiKey: string): Promise<AccountHoldin
 	return response.json()
 }
 
-export async function fetchAccountHoldingsStatus(): Promise<AccountHoldingsStatus> {
-	const response = await fetch(`${API_BASE_URL}/api/account/holdings/status`)
+export async function fetchAccountHoldingsStatus(accountId: string): Promise<AccountHoldingsStatus> {
+	const response = await fetch(`${API_BASE_URL}/api/account/holdings/status?account_id=${encodeURIComponent(accountId)}`)
 
 	if (!response.ok) {
 		throw new Error(`Failed to fetch account holdings status: ${response.status}`)
 	}
 
 	return response.json()
+}
+
+
+export type AccountProfile = {
+    id: string
+    display_name: string
+    verified: boolean
+    last_updated: string | null
+    snapshot_id: string | null
+}
+
+export type CraftPlan = {
+    eligibility: string
+    reservation_revision: number | null
+    reserved: { item_id: number; name: string; quantity: number }[]
+    item_id: number
+    name: string
+    account_id: string | null
+    snapshot_id: string | null
+    status: "quoted" | "incomplete" | "unavailable"
+    recipe_id: number | null
+    requested_quantity: number
+    planned_quantity: number
+    purchase_cost: number | null
+    net_revenue: number | null
+    economic_gain: number | null
+    cash_surplus: number | null
+    additional_gold_needed: number | null
+    owned_sale_value: number | null
+    within_budget?: boolean | null
+    observed_at: string
+    issues: string[]
+    fee_model: string
+    allocation_policy: string
+    purchases: { item_id: number; name: string; quantity: number; cost: number }[]
+    consumed: { item_id: number; name: string; quantity: number }[]
+    steps: { recipe_id: number; item_id: number; name: string; runs: number; produced: number; eligibility: string; recipe_state: string; crafter: string | null; eligible_characters: EligibleCharacter[] }[]
+    leftovers: { item_id: number; name: string; quantity: number }[]
+}
+
+export async function fetchAccountProfiles(): Promise<AccountProfile[]> {
+    const response = await fetch(`${API_BASE_URL}/api/account/profiles`)
+    if (!response.ok) throw new Error("Could not load accounts.")
+    return response.json()
+}
+
+export async function fetchCraftPlan(itemId: number, options: {
+    quantity: number; account_id?: string; material_pricing: MaterialPricingMode
+    output_pricing: OutputPricingMode; liquidation_pricing?: OutputPricingMode
+    budget?: number; check_depth: boolean; recipe_id?: number; eligible_only?: boolean
+}, signal?: AbortSignal): Promise<CraftPlan> {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(options)) {
+        if (value !== undefined) params.set(key, String(value))
+    }
+    const response = await fetch(`${API_BASE_URL}/api/profit/${itemId}/plan?${params}`, { signal })
+    if (!response.ok) {
+        const body = await response.json().catch(() => null)
+        throw new Error(typeof body?.detail === "string" ? body.detail : "Could not calculate the plan.")
+    }
+    return response.json()
+}
+
+
+export type SourceStatus = { status: string; fresh: boolean; fetched_at: string | null; error?: string; count: number }
+export type CraftingStatus = {
+    account_id: string; snapshot_id: string | null
+    characters_source: SourceStatus; account_recipes_source: SourceStatus
+    characters: { name: string; crafting: SourceStatus; recipes: SourceStatus; disciplines: { discipline: string; rating: number; active: boolean }[] }[]
+}
+export type ReservedMaterial = { item_id: number; name: string; owned: number; usable: number; reserved: number; available: number; purpose: string }
+export type AccountMaterials = { account_id: string; snapshot_id: string | null; reservation_revision: number; total: number; rows: ReservedMaterial[] }
+
+async function accountRead<T>(path: string, accountId: string, search: string, signal?: AbortSignal): Promise<T> {
+    const params = new URLSearchParams({ account_id: accountId, search })
+    const response = await fetch(`${API_BASE_URL}/api/account/${path}?${params}`, { signal })
+    if (!response.ok) throw new Error("Could not load account data. Refresh to retry.")
+    return response.json()
+}
+export function fetchCraftingStatus(accountId: string, signal?: AbortSignal) {
+    return accountRead<CraftingStatus>("crafting", accountId, "", signal)
+}
+export function fetchAccountMaterials(accountId: string, search: string, signal?: AbortSignal) {
+    return accountRead<AccountMaterials>("materials", accountId, search, signal)
+}
+export async function saveMaterialReservation(accountId: string, itemId: number, quantity: number, purpose: string, revision: number) {
+    const response = await fetch(`${API_BASE_URL}/api/account/reservations/${itemId}?account_id=${encodeURIComponent(accountId)}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quantity, purpose, expected_revision: revision }),
+    })
+    if (!response.ok) {
+        const body = await response.json().catch(() => null)
+        throw new Error(typeof body?.detail === "string" ? body.detail : "Could not save the reservation.")
+    }
+    return response.json()
 }

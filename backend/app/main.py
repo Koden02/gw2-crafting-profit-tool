@@ -2,9 +2,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from app.services.reservation_service import AccountDataChanged
 
 from app.api.account import router as account_router
 from app.api.debug import router as debug_router
+from app.api.price_history import router as price_history_router
 from app.api.profitable_crafts import router as profitable_crafts_router
 from app.api.profit import router as profit_router
 from app.api.sync import router as sync_router
@@ -42,8 +45,14 @@ def health_check() -> dict[str, str]:
 	return {"status": "ok"}
 
 
+@app.exception_handler(AccountDataChanged)
+async def account_data_changed(request, exc):
+	return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
 app.include_router(sync_router)
 app.include_router(account_router)
 app.include_router(debug_router)
 app.include_router(profit_router)
 app.include_router(profitable_crafts_router)
+app.include_router(price_history_router)

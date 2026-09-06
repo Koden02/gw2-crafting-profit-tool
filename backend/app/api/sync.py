@@ -10,7 +10,7 @@ from app.models.commerce_price import CommercePrice
 from app.models.item import Item
 from app.models.recipe import Recipe
 from app.services.auto_sync_service import auto_price_sync_service
-from app.services.price_history_service import PriceHistoryService
+from app.services.price_history_service import PriceHistoryService, normalize_datetime
 from app.services.price_sync_lock import PriceSyncBusyError
 from app.services.sync_service import SyncService
 
@@ -61,7 +61,7 @@ def get_sync_status(db: Session = Depends(get_db)) -> dict:
 	price_last_updated = db.query(func.max(CommercePrice.last_updated)).scalar()
 
 	return {
-		"price_last_updated": price_last_updated,
+		"price_last_updated": normalize_datetime(price_last_updated),
 		"price_count": price_count,
 		"item_count": item_count,
 		"recipe_count": recipe_count,
