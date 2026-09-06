@@ -7,8 +7,10 @@ Market estimates remain available without enforcing account eligibility.
 
 ## Updating an existing installation
 
-1. Restart the backend. Startup runs the transactional, versioned SQLite migration.
-2. Run **Sync Recipes** once and refresh prices. Older recipes are marked incomplete
+1. Pause automatic price sync in **Options**, let any active sync finish, and back up
+   the SQLite database. Restart the backend to run the transactional, versioned migration.
+2. Run **Sync Recipes** once, wait for completion, then run **Sync Prices** and wait
+   for it to finish. Older recipes are marked incomplete
    until refreshed because their cached ingredients may omit currency/guild costs.
 3. Choose **Market estimates / Add account**, enter a key with `account`,
    `inventories`, `characters` and `unlocks` permissions, and **Sync Account Data**. The API verifies `/v2/account.id`.
@@ -16,6 +18,13 @@ Market estimates remain available without enforcing account eligibility.
    filter starts enabled; expand **Character coverage and material reservations**
    to inspect sources or save stock for other goals. A key belonging to
    another account is rejected rather than silently switching or replacing data.
+5. Resume automatic price sync in **Options**.
+
+Run the upgrade refreshes sequentially. A large backlog of expired price history can
+take several minutes to roll up and prune, holding SQLite's write lock and temporarily
+blocking other reads or syncs. If another sync reports a database-lock error, let
+history maintenance finish and retry that sync; completed recipe/price batches remain
+saved. Do not run an account refresh during this maintenance window.
 
 Old holdings are retained in `account_holdings_legacy_v0` and copied into an
 unverified `legacy-owner-unknown` profile with zero allocatable stock. That profile
@@ -219,6 +228,17 @@ all passed. SQLite datetime-adapter deprecations and the Vite
 chunk-size warning remain known toolchain warnings. Isolated fixtures do not prove
 real API credentials, current full-cache eligibility or live market fills. The real
 account database is not migrated or refreshed by development tests.
+
+### Local upgrade validation, September 2026
+
+A separate branch-closeout check backed up and migrated the existing local database,
+then repeated startup successfully. All 750 legacy holding records were preserved
+with zero allocatable stock; item, recipe, ingredient and price row counts were
+unchanged by the migration. A live public refresh subsequently updated 13,183 recipes
+and 27,987 prices. History maintenance completed, and full-cache market table and
+shopping-plan profit values reconciled. A concurrent recipe refresh initially hit
+SQLite's lock during the large history cleanup; retrying sequentially succeeded.
+Authenticated account coverage requires the separate user-triggered account sync.
 
 ## Remaining scope and next milestone
 

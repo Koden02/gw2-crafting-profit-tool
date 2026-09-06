@@ -11,7 +11,7 @@ GW2 Craft Profit Tool is a local full-stack app for analyzing Guild Wars 2 craft
 
 Project status: Early Development v0.2.0, with local account isolation, reliable quotes, crafting eligibility and reservations.
 
-See [account quotes and upgrade instructions](docs/ACCOUNT_QUOTES.md). Restart the backend, refresh recipes once, and sync an explicitly selected account. Legacy holdings remain preserved with an unknown owner and are excluded from plans.
+See [account quotes and upgrade instructions](docs/ACCOUNT_QUOTES.md). Pause automatic price sync, back up the database, restart the backend, and refresh recipes and prices sequentially before syncing an explicitly selected account. Resume automatic price sync afterward. Legacy holdings remain preserved with an unknown owner and are excluded from plans.
 
 The v0.2.0 release starts the historical price analysis track with per-item price history reads and item drawer charts over locally recorded price snapshots and rollups. The app also includes local data sync, automatic server-side price refresh, configurable snapshot retention, dedicated options and tracked-item review pages, sync overlap protection, craft profitability analysis, Trading Post depth visibility, table-level risk signals, owned-material adjusted batch planning, saved filters, watchlists, endpoint smoke coverage, and a usable frontend for browsing profitable crafts. Selected-account results now verify character crafting levels and recipe eligibility, exclude reserved bank/material stock, and rank by gain after valuing consumed stock. JSON import, other inventories, automatic quantity suggestions, full cooldown/non-TP support, trend scoring and packaging remain future work. Quotes still depend on the stated market assumptions.
 
