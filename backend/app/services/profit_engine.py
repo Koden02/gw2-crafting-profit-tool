@@ -15,10 +15,13 @@ from app.services.crafting_eligibility import CraftingEligibility
 from app.services.reservation_service import AccountDataChanged
 from app.services.inventory_coverage import source_fresh
 from app.services.craft_planner import CraftPlanner, Allocation
+from app.models.account_trading_post import AccountTradingPost
+from app.services.trading_post_service import trading_post_status
 from app.models.commerce_price import CommercePrice
 from app.models.item import Item
 from app.models.price_history import CommercePriceRollup, CommercePriceSnapshot
 from app.models.recipe import Recipe
+from app.services.batching import chunk_list
 
 MARKET_FLOW_WINDOW_DAYS = 7
 MARKET_FLOW_MIN_OBSERVATIONS = 3
@@ -27,7 +30,8 @@ MARKET_FLOW_STALE_AFTER_HOURS = 48
 
 
 class ProfitEngine:
-	def __init__(self, db: Session, account_id: str | None = None, include_history: bool = True) -> None:
+	def __init__(self, db: Session, account_id: str | None = None, include_history: bool = True,
+	             *, root_item_id: int | None = None) -> None:
 		self.db = db
 		self.account_id = account_id
 		# One SELECT keeps holdings and their snapshot identity coherent even when
@@ -40,12 +44,17 @@ class ProfitEngine:
 			raise ValueError("Select a verified account.")
 		self.crafting_data, self.reservations = {}, {}
 		self.stock_locations = []
+		self.trading_post = {}
+		self.trading_post_status = trading_post_status(None, self.profile)
 		for attempt in range(3):
 			if not self.profile:
 				break
 			version = (self.profile.snapshot_id, self.profile.reservation_revision)
 			capabilities = db.query(AccountCrafting).filter_by(account_id=account_id).populate_existing().one_or_none()
 			self.crafting_data = json.loads(capabilities.payload) if capabilities and capabilities.snapshot_id == version[0] else {}
+			trading = db.query(AccountTradingPost).filter_by(account_id=account_id).populate_existing().one_or_none()
+			self.trading_post_status = trading_post_status(trading, self.profile)
+			self.trading_post = json.loads(trading.payload) if trading and self.trading_post_status["fresh"] else {}
 			self.reservations = {r.item_id: r.quantity for r in db.query(MaterialReservation).filter_by(account_id=account_id).populate_existing().all()}
 			self.stock_locations = [dict(item_id=r.item_id, source=r.source, position=r.position, quantity=r.count)
 			                        for r in db.query(AccountStack).filter_by(account_id=account_id).populate_existing().all()
@@ -61,40 +70,58 @@ class ProfitEngine:
 			self.profile = account_rows[0][0]
 		self._market_plans: dict[tuple[int, str], dict] = {}
 
-		self.items_by_id = {
-			item.id: item
-			for item in self.db.query(Item).all()
-		}
-
-		self.prices_by_item_id = {
-			price.item_id: price
-			for price in self.db.query(CommercePrice).all()
-		}
+		self.load_catalog(root_item_id)
 
 		self.holdings_by_item_id = {
 			holding.item_id: holding
-			for _, holding in account_rows if holding is not None
+			for _, holding in account_rows if holding is not None and holding.item_id in self.items_by_id
 		}
 
-		self.recipes_by_output_item_id: dict[int, list[Recipe]] = defaultdict(list)
-		for recipe in self.db.query(Recipe).options(selectinload(Recipe.ingredients)).order_by(Recipe.id).all():
-			self.recipes_by_output_item_id[recipe.output_item_id].append(recipe)
 		self.eligibility = CraftingEligibility(self)
 		if not include_history:
 			self.price_history_item_ids, self.market_flow_by_item_id = set(), {}
 			return
 
-		snapshot_history_item_ids = {
-			item_id
-			for item_id, in self.db.query(CommercePriceSnapshot.item_id).distinct().all()
-		}
-		rollup_history_item_ids = {
-			item_id
-			for item_id, in self.db.query(CommercePriceRollup.item_id).distinct().all()
-		}
+		snapshots = self.db.query(CommercePriceSnapshot.item_id)
+		rollups = self.db.query(CommercePriceRollup.item_id)
+		if root_item_id is not None:
+			snapshots = snapshots.filter(CommercePriceSnapshot.item_id == root_item_id)
+			rollups = rollups.filter(CommercePriceRollup.item_id == root_item_id)
+		snapshot_history_item_ids = {item_id for item_id, in snapshots.distinct().all()}
+		rollup_history_item_ids = {item_id for item_id, in rollups.distinct().all()}
 		self.price_history_item_ids = snapshot_history_item_ids | rollup_history_item_ids
-		self.market_flow_by_item_id = self.build_market_flow_by_item_id()
-		self.eligibility = CraftingEligibility(self)
+		self.market_flow_by_item_id = self.build_market_flow_by_item_id(
+			[root_item_id] if root_item_id is not None else None)
+
+	def load_catalog(self, root_item_id: int | None) -> None:
+		"""Load every alternative along this item's ingredient graph, once per request.
+
+		Broad searches still use the full catalog. Single-item views use indexed
+		lookups; no shared account objects or stale cross-request price cache.
+		"""
+		self.recipes_by_output_item_id: dict[int, list[Recipe]] = defaultdict(list)
+		if root_item_id is None:
+			self.items_by_id = {item.id: item for item in self.db.query(Item).all()}
+			self.prices_by_item_id = {price.item_id: price for price in self.db.query(CommercePrice).all()}
+			for recipe in self.db.query(Recipe).options(selectinload(Recipe.ingredients)).order_by(Recipe.id).all():
+				self.recipes_by_output_item_id[recipe.output_item_id].append(recipe)
+			return
+
+		visited, pending = set(), {root_item_id}
+		while pending:
+			frontier = sorted(pending - visited)
+			visited.update(frontier)
+			pending = set()
+			for batch in chunk_list(frontier, 500):
+				recipes = (self.db.query(Recipe).filter(Recipe.output_item_id.in_(batch))
+				           .options(selectinload(Recipe.ingredients)).order_by(Recipe.id).all())
+				for recipe in recipes:
+					self.recipes_by_output_item_id[recipe.output_item_id].append(recipe)
+					pending.update(i.item_id for i in recipe.ingredients if i.item_id not in visited)
+		self.items_by_id, self.prices_by_item_id = {}, {}
+		for batch in chunk_list(sorted(visited), 500):
+			self.items_by_id.update((item.id, item) for item in self.db.query(Item).filter(Item.id.in_(batch)).all())
+			self.prices_by_item_id.update((p.item_id, p) for p in self.db.query(CommercePrice).filter(CommercePrice.item_id.in_(batch)).all())
 
 	def get_item(self, item_id: int) -> Item | None:
 		return self.items_by_id.get(item_id)
@@ -333,8 +360,9 @@ class ProfitEngine:
 
 		return results[:limit]
 
-	def build_market_flow_by_item_id(self) -> dict[int, dict[str, Any]]:
-		output_item_ids = list(self.recipes_by_output_item_id.keys())
+	def build_market_flow_by_item_id(self, output_item_ids: list[int] | None = None) -> dict[int, dict[str, Any]]:
+		if output_item_ids is None:
+			output_item_ids = list(self.recipes_by_output_item_id.keys())
 
 		if not output_item_ids:
 			return {}

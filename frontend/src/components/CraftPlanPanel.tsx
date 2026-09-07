@@ -5,15 +5,15 @@ import { formatCoins, formatDateTime, formatInventoryLocation } from "../utils/f
 import { RecordCraftResult } from "./CraftRunResults"
 import ItemReferenceLinks, { ItemMarketLink } from "./ItemReferenceLinks"
 
-export default function CraftPlanPanel({ itemId, itemName, recipeId, accountId, accountName, materialPricing, outputPricing, eligibleOnly, initialQuantity = 1, initialBudget = "", initialCheckDepth = false }: {
+export default function CraftPlanPanel({ itemId, itemName, recipeId, accountId, accountName, materialPricing, outputPricing, eligibleOnly, useTradingPost = false, inventoryOnly = false, initialQuantity = 1, initialBudget = "", initialCheckDepth = false }: {
     itemId: number; itemName: string; recipeId: number; accountId: string; accountName: string; materialPricing: MaterialPricingMode; outputPricing: OutputPricingMode; eligibleOnly: boolean
-    initialQuantity?: number; initialBudget?: string; initialCheckDepth?: boolean
+    initialQuantity?: number; initialBudget?: string; initialCheckDepth?: boolean; useTradingPost?: boolean; inventoryOnly?: boolean
 }) {
     const [quantity, setQuantity] = useState(initialQuantity)
     const [budget, setBudget] = useState(initialBudget)
     const [liquidation, setLiquidation] = useState<OutputPricingMode>(outputPricing)
     const [revision, setRevision] = useState(0)
-    const [checkDepth, setCheckDepth] = useState(initialCheckDepth)
+    const [checkDepth, setCheckDepth] = useState(initialCheckDepth || useTradingPost)
     const [plan, setPlan] = useState<CraftPlan | null>(null)
     const [error, setError] = useState<string | null>(null)
     const [loading, setLoading] = useState(true)
@@ -30,6 +30,7 @@ export default function CraftPlanPanel({ itemId, itemName, recipeId, accountId, 
             void fetchCraftPlan(itemId, {
                 quantity, eligible_only: eligibleOnly, recipe_id: recipeId, account_id: accountId || undefined, material_pricing: materialPricing,
                 output_pricing: outputPricing, liquidation_pricing: liquidation, check_depth: checkDepth,
+                use_trading_post: useTradingPost, inventory_only: inventoryOnly,
                 budget: budget === "" ? undefined : Math.floor(Number(budget) * 10000),
             }, controller.signal).then(result => {
                 if (!cancelled) { setPlan(result); setError(null); setLoading(false) }
@@ -38,17 +39,19 @@ export default function CraftPlanPanel({ itemId, itemName, recipeId, accountId, 
             })
         }, 250)
         return () => { cancelled = true; clearTimeout(timer); controller.abort() }
-    }, [itemId, recipeId, accountId, materialPricing, outputPricing, quantity, budget, liquidation, revision, checkDepth, eligibleOnly])
+    }, [itemId, recipeId, accountId, materialPricing, outputPricing, quantity, budget, liquidation, revision, checkDepth, eligibleOnly, useTradingPost, inventoryOnly])
 
-    function invalidate() { setPlan(null); setError(null); setLoading(true); setMessage(""); setCheckDepth(false) }
+    function invalidate() { setPlan(null); setError(null); setLoading(true); setMessage(""); setCheckDepth(useTradingPost || inventoryOnly) }
     async function copyPlan() {
         if (!plan) return
         const lines = [
             plan.name, `Account: ${accountId || "market estimate"}; snapshot: ${plan.snapshot_id || "none"}`,
             `Recipe ${plan.recipe_id}; output ${plan.planned_quantity}; quoted ${plan.observed_at}`,
-            `Materials: ${materialPricing === "buy" ? "buy orders" : "instant buy"}; output: ${outputPricing === "buy" ? "instant sell" : "list sell"}; owned liquidation: ${liquidation === "buy" ? "instant sell" : "list sell"}`,
+            `Materials: ${inventoryOnly ? "owned inventory only" : materialPricing === "buy" ? "buy orders" : "instant buy"}; output: ${outputPricing === "buy" ? "instant sell" : "list sell"}; owned liquidation: ${liquidation === "buy" ? "instant sell" : "list sell"}`,
             `Purchases: ${formatCoins(plan.purchase_cost)}; upfront gold: ${formatCoins(plan.additional_gold_needed)}; gain vs selling owned stock: ${formatCoins(plan.economic_gain)}`,
-            "Buy:", ...plan.purchases.map(row => `${row.quantity} ${row.name}: ${formatCoins(row.cost)}`),
+            plan.procurement ? "Procurement:" : "Buy:", ...plan.purchases.map(row => plan.procurement
+                ? `${row.name}: collect ${row.pickup_quantity}, wait for ${row.pending_quantity} pending, order ${row.new_order_quantity} at ${formatCoins(row.target_unit_price ?? null)} each; committed ${formatCoins(row.committed_cost ?? null)}; new ${formatCoins(row.new_order_cost ?? null)}`
+                : `${row.quantity} ${row.name}: ${formatCoins(row.cost)}`),
             "Use owned:", ...plan.consumed.map(row => `${row.quantity} ${row.name}${row.locations?.length ? `: ${row.locations.map(location => `${location.quantity} from ${formatInventoryLocation(location.source, location.position)}`).join("; ")}` : ""}`),
             "Craft in order:", ...plan.steps.map(row => `${row.runs} runs of recipe ${row.recipe_id}: ${row.produced} ${row.name}; crafter ${row.crafter || "unverified"}, recipe ${row.recipe_state}`),
             "Leftovers:", ...plan.leftovers.map(row => `${row.quantity} ${row.name}`),
@@ -61,12 +64,12 @@ export default function CraftPlanPanel({ itemId, itemName, recipeId, accountId, 
     return <Box>
         <Typography variant="h6">Craft and Shopping Plan</Typography>
         <Typography variant="body2">Account: {accountName}</Typography>
-        <Alert severity="info" sx={{ my: 1 }}>{eligibleOnly ? "This plan requires verified crafting steps and excludes reserved stock. Purchases and sales still depend on the stated market assumptions." : "Estimate mode: crafting eligibility is not enforced. Account reservations are still excluded from owned stock."}</Alert>
+        <Alert severity="info" sx={{ my: 1 }}>{inventoryOnly ? "Craft from inventory: all ingredients must come from usable owned stock or intermediate crafts. Increasing the quantity will never add purchases. Gold is still needed for sale fees." : eligibleOnly ? "This plan requires verified crafting steps and excludes reserved stock. Purchases and sales still depend on the stated market assumptions." : "Estimate mode: crafting eligibility is not enforced. Account reservations are still excluded from owned stock."}</Alert>
         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ my: 2 }}>
             <TextField label="Target output" type="number" size="small" value={quantity}
                 onChange={e => { invalidate(); setQuantity(Math.min(100000, Math.max(1, Math.floor(Number(e.target.value)) || 1))) }} />
-            <TextField label="Budget (gold, optional)" type="number" size="small" value={budget}
-                onChange={e => { invalidate(); setBudget(e.target.value) }} />
+            {!inventoryOnly && <TextField label="Budget (gold, optional)" type="number" size="small" value={budget}
+                onChange={e => { invalidate(); setBudget(e.target.value) }} />}
             <TextField label="Sell owned materials" select size="small" value={liquidation}
                 onChange={e => { invalidate(); setLiquidation(e.target.value as OutputPricingMode) }}>
                 <MenuItem value="buy">Instant sell</MenuItem><MenuItem value="sell">List sell</MenuItem>
@@ -83,20 +86,30 @@ export default function CraftPlanPanel({ itemId, itemName, recipeId, accountId, 
             <Typography variant="body2">Eligibility: {plan.eligibility} · Recipe {plan.recipe_id ?? "unavailable"} · Output {plan.planned_quantity} · {formatDateTime(plan.observed_at)}</Typography>
             <Stack direction="row" spacing={3} flexWrap="wrap" useFlexGap sx={{ my: 2 }}>
                 {[
-                    ["Purchase cost", plan.purchase_cost], ["Upfront gold needed", plan.additional_gold_needed],
-                    ["Net sale proceeds", plan.net_revenue], ["Owned stock resale value", plan.owned_sale_value],
+                    [plan.procurement ? "Material outlay (pending + new)" : "Purchase cost", plan.purchase_cost], ["New gold needed", plan.additional_gold_needed],
+                    ["Net sale proceeds", plan.net_revenue], [plan.procurement ? "Inventory + pickup resale value" : "Owned stock resale value", plan.owned_sale_value],
                     ["Cash surplus", plan.cash_surplus], ["Gain vs selling owned stock", plan.economic_gain],
                 ].map(([label, value]) => <Box key={String(label)}><Typography variant="caption">{label}</Typography><Typography>{formatCoins(value as number | null)}</Typography></Box>)}
             </Stack>
+            {plan.procurement && <Alert severity="info" sx={{ mb: 2 }}>
+                {{ place_orders: "Place the remaining buy orders, then wait for fills.", waiting_for_orders: "Waiting for existing orders to fill.", collect_items: "Collect the listed purchases, then sync before crafting.", ready: "All materials are present in the synced inventory." }[plan.procurement.state]}
+                {" "}Already committed to this plan: {formatCoins(plan.procurement.committed_cost)}. New orders: {formatCoins(plan.procurement.new_order_cost)}. Output listing fees: {formatCoins(plan.procurement.listing_fees)}.
+            </Alert>}
             {plan.issues.map(issue => <Alert key={issue} severity="warning" sx={{ mb: 1 }}>{issue}</Alert>)}
-            <Table size="small"><TableHead><TableRow><TableCell>Buy</TableCell><TableCell>Quantity</TableCell><TableCell>Cost</TableCell></TableRow></TableHead>
+            {inventoryOnly && plan.status === "quoted" && <Typography>No material purchases needed.</Typography>}
+            {!inventoryOnly && <Box sx={{ overflowX: "auto" }}><Table size="small"><TableHead><TableRow><TableCell>{plan.procurement ? "Material" : "Buy"}</TableCell><TableCell>Needed</TableCell>
+                {plan.procurement && <><TableCell>Pickup</TableCell><TableCell>Pending</TableCell><TableCell>Order now</TableCell><TableCell>Target each</TableCell></>}
+                <TableCell>{plan.procurement ? "Outlay" : "Cost"}</TableCell></TableRow></TableHead>
                 <TableBody>{plan.purchases.map(row => <TableRow key={row.item_id}>
                     <TableCell><Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
                         <span>{row.name}</span><ItemMarketLink itemId={row.item_id} name={row.name} />
                     </Stack></TableCell>
-                    <TableCell>{row.quantity}</TableCell><TableCell>{formatCoins(row.cost)}</TableCell>
+                    <TableCell>{row.quantity}</TableCell>
+                    {plan.procurement && <><TableCell>{row.pickup_quantity}</TableCell><TableCell>{row.pending_quantity}</TableCell><TableCell>{row.new_order_quantity}</TableCell><TableCell>{formatCoins(row.target_unit_price ?? null)}</TableCell></>}
+                    <TableCell>{formatCoins(row.cost)}</TableCell>
                 </TableRow>)}</TableBody>
-            </Table>
+            </Table></Box>}
+            {plan.procurement && <Typography variant="caption">Needed is the amount missing from usable inventory. Pickup + pending + order now equals needed. Targets join today's highest buy price; fills are not guaranteed. Outlay includes existing order prices and new orders, excluding pickups already valued above.</Typography>}
             <Typography sx={{ mt: 2 }}>Use owned: {plan.consumed.map(row => `${row.quantity} ${row.name}`).join(", ") || "None"}</Typography>
             {plan.consumed.map(row => row.locations?.length ? <Typography key={row.item_id} variant="body2">Gather {row.name}: {row.locations.map(location => `${location.quantity} from ${formatInventoryLocation(location.source, location.position)}`).join("; ")}</Typography> : null)}
             <Typography sx={{ mt: 1 }}>Craft in order:</Typography>

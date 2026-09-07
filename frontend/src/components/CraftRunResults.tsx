@@ -20,6 +20,7 @@ export function RecordCraftResult({ plan }: { plan: CraftPlan }) {
     return <Box component="details" sx={{ mt: 2 }}>
         <Box component="summary" sx={{ cursor: "pointer" }}>Record the result after crafting and selling</Box>
         <Typography variant="body2" sx={{ my: 1 }}>Enter the totals for all {plan.planned_quantity} outputs after they have sold. Net sales must already subtract both Trading Post fees, including the upfront listing fee. Partial or unsold batches should wait.</Typography>
+        {plan.procurement && <Typography variant="body2">Include the actual cost of this plan's pending and new buy orders. Exclude items that were already awaiting pickup when quoted; their resale value is included with owned stock.</Typography>}
         <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ my: 1 }}>
             <TextField label="Actual material purchases (gold)" size="small" value={purchases} disabled={saved} onChange={e => setPurchases(e.target.value)} />
             <TextField label="Actual net sales after all fees (gold)" size="small" value={sales} disabled={saved} onChange={e => setSales(e.target.value)} />

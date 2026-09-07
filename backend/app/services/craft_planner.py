@@ -31,7 +31,7 @@ class CraftPlanner:
     def __init__(self, engine: Any, material_pricing: str = "buy", output_pricing: str = "sell",
                  liquidation_pricing: str | None = None,
                  listing_provider: Callable[[int], dict] | None = None,
-                 require_eligible: bool = False) -> None:
+                 require_eligible: bool = False, inventory_only: bool = False) -> None:
         self.engine = engine
         self.material_pricing = material_pricing
         self.output_pricing = output_pricing
@@ -41,6 +41,7 @@ class CraftPlanner:
             raise ValueError("Pricing mode must be buy or sell.")
         self.listing_provider = listing_provider
         self.require_eligible = require_eligible
+        self.inventory_only = inventory_only
         self.books: dict[int, dict | None] = {}
         self.expansions = 0
         self.search_limited = False
@@ -142,7 +143,7 @@ class CraftPlanner:
 
         candidates: list[tuple[float, int, Allocation]] = []
         already_bought = state.purchases.get(item_id, 0)
-        cost = self.market_total(item_id, already_bought + count, self.material_pricing, False)
+        cost = None if self.inventory_only else self.market_total(item_id, already_bought + count, self.material_pricing, False)
         if cost is not None:
             trial = deepcopy(state)
             trial.purchases[item_id] = already_bought + count
@@ -157,7 +158,9 @@ class CraftPlanner:
                 except PlanUnavailable as exc:
                     errors.append(str(exc))
         if not candidates:
-            suffix = "; ".join(sorted(set(errors))) or "no purchase quote or acyclic crafting route"
+            suffix = "; ".join(sorted(set(errors))) or (
+                "not enough usable inventory or an available crafting route" if self.inventory_only
+                else "no purchase quote or acyclic crafting route")
             raise PlanUnavailable(f"{self.engine.get_item_name(item_id)}: {suffix}.")
         return min(candidates, key=lambda c: (c[0], c[1]))[2]
 
@@ -166,6 +169,8 @@ class CraftPlanner:
               discipline: str | None = None) -> dict[str, Any]:
         if type(quantity) is not int or not 1 <= quantity <= 100000:
             raise ValueError("Quantity must be an integer between 1 and 100000.")
+        if self.inventory_only and (not use_owned or not self.engine.account_id):
+            raise ValueError("Select an account to craft from inventory.")
         self.expansions = 0
         self.search_limited = False
         now = datetime.now(timezone.utc)
@@ -184,6 +189,7 @@ class CraftPlanner:
             except PlanUnavailable as exc:
                 errors.append(str(exc))
         base = dict(item_id=item_id, name=self.engine.get_item_name(item_id),
+                    inventory_only=self.inventory_only,
                     account_id=self.engine.account_id if use_owned else None,
                     snapshot_id=self.engine.profile.snapshot_id if use_owned and self.engine.profile else None,
                     reservation_revision=self.engine.profile.reservation_revision if use_owned and self.engine.profile else None,
@@ -226,7 +232,7 @@ class CraftPlanner:
             issues.append("Output sale quote unavailable or requested quantity exceeds current bid depth.")
         if owned_value is None:
             issues.append("Owned-material liquidation value is unavailable for this quantity.")
-        if self.material_pricing == "buy":
+        if self.material_pricing == "buy" and not self.inventory_only:
             issues.append("Buy orders require future fills; material availability is not guaranteed.")
         if self.output_pricing == "sell" or (state.consumed and self.liquidation_pricing == "sell"):
             issues.append("Sell-list values assume a future buyer; no sale speed or sale quantity is guaranteed.")

@@ -14,6 +14,8 @@ from app.models import AccountCrafting, MaterialReservation, Item
 from app.services.crafting_eligibility import fresh
 from app.services.reservation_service import set_reservation
 from app.services.inventory_coverage import inventory_coverage
+from app.models.account_trading_post import AccountTradingPost
+from app.services.trading_post_service import trading_post_status
 
 router = APIRouter(prefix="/api/account", tags=["account"])
 
@@ -23,6 +25,7 @@ class AccountSyncRequest(BaseModel):
 	account_id: str | None = None
 	include_crafting: bool = True
 	include_inventory: bool = True
+	include_trading_post: bool = False
 
 
 @router.post("/sync/holdings")
@@ -38,7 +41,7 @@ def sync_account_holdings(
 	service = AccountService(db)
 
 	try:
-		return service.sync_holdings(api_key, payload.account_id, payload.include_crafting, payload.include_inventory)
+		return service.sync_holdings(api_key, payload.account_id, payload.include_crafting, payload.include_inventory, payload.include_trading_post)
 	except AccountMismatch as exc:
 		raise HTTPException(status_code=409, detail=str(exc)) from exc
 	except ValueError as exc:
@@ -119,6 +122,22 @@ def get_crafting_status(account_id: str, db: Session = Depends(get_db)) -> dict:
                          disciplines=data.get("crafting", {}).get("data", []),
                          recipes=summary(data.get("recipes", {})))
                     for name, data in sorted(payload.get("by_character", {}).items())])
+
+
+@router.get("/trading-post")
+def get_trading_post(account_id: str, db: Session = Depends(get_db)) -> dict:
+    profile = require_account(db, account_id)
+    row = db.get(AccountTradingPost, account_id)
+    payload = json.loads(row.payload) if row else {}
+    ids = {r["item_id"] for side in ("buys", "sells") for r in payload.get(side, [])}
+    ids.update(r["item_id"] for r in payload.get("delivery", {}).get("items", []))
+    names = {i.id: i.name for i in db.query(Item).filter(Item.id.in_(ids)).all()} if ids else {}
+    named = lambda rows: [{**r, "name": names.get(r["item_id"], f"Item {r['item_id']}")} for r in rows]
+    return dict(account_id=account_id, **trading_post_status(row, profile),
+                buys=named(payload.get("buys", [])), sells=named(payload.get("sells", [])),
+                delivery=dict(coins=payload.get("delivery", {}).get("coins", 0),
+                              items=named(payload.get("delivery", {}).get("items", []))),
+                committed_gold=sum(r["price"] * r["quantity"] for r in payload.get("buys", [])))
 
 
 class ReservationUpdate(BaseModel):

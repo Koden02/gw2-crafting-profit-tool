@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Kept the local site at `http://127.0.0.1:5173/`, redirected the backend root on port 8000 to the Crafts landing page, and added a landing-page fallback for unknown frontend routes. Vite now reports an occupied port instead of silently changing the site's address.
+
+- Added **Craft from inventory** to batch search: find supported crafts from usable owned ingredients, including intermediate crafts, and compare selling the materials with selling the finished output after fees. Purchases are disabled throughout plan review; upfront sale fees remain visible. **Buy missing materials** retains budgeted instant-buy and buy-order searches. See [workflow and scope](CRAFT_BATCHES.md).
+
+- Optimized single-item details, scenarios, depth and craft plans to query only their recipe graph and required history. The drawer now renders sections independently and cancels superseded requests. Local detail/scenario requests dropped from 32–46 seconds to about 0.4 seconds; see [measurements and scope](ITEM_LOADING.md). Backend restart required.
+
+- Fixed account/Trading Post requests failing after SQLite's default five-second lock wait by using a 30-second timeout on every backend connection. Exhausted lock waits return a clear HTTP 503 retry message; unrelated database errors remain errors. File-backed concurrency tests cover a lock lasting beyond five seconds, reservation rollback and recovery. Backend restart required.
+
+- Added optional Trading Post order/pickup sync and a buy-order batch strategy. Conditional plans separate usable inventory, pickups, pending purchases, new orders and funding; migration v4 keeps observations account-scoped and separate from inventory. See [workflow and validation](BUY_ORDER_PLANS.md).
+
 - Added gw2efficiency, GW2TP and Wiki links to item details and crafting plans, plus market links for shopping ingredients. Calculator links carry the displayed output quantity; reference pages open in a new tab without transferring local account data or reservations.
 - Fixed account sync rejecting material items repeated across API categories. Matching balances count once; conflicting counts or bindings still preserve the previous snapshot and report an error.
 - Added **Find a profitable crafting batch**: account-eligible whole quantities constrained by budget, minimum economic gain, output cap and live instant-buy/instant-sell depth.

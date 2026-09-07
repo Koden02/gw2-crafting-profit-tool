@@ -16,6 +16,21 @@ This file acts as the **source of truth for development priorities**.
 
 September 2026 reconciliation: account isolation, reliable quotes, crafting eligibility and reservations are implemented; see [contracts and acceptance tests](ACCOUNT_QUOTES.md). Direct API inventory now includes bank, materials, shared slots and character bags. [Budgeted crafting batches](CRAFT_BATCHES.md) add bounded quantity suggestions and completed-result comparison. Real account sync and live batch search are validated; a completed craft and sale remain pending. The older phases below are historical sequencing, not proof of current completeness.
 
+[Buy-order planning](BUY_ORDER_PLANS.md) now adds optional open-order and pickup
+observations, conditional batch suggestions and a procurement checklist. Automated
+and fixture-browser checks pass; real Trading Post sync and a small completed sale
+remain the next validation. Following that, prioritize a combined crafting queue,
+persistent transaction matching, broader opportunity ranking and acquisition routes.
+
+[Single-item loading](ITEM_LOADING.md) now uses scoped recipe/history reads and
+independent drawer sections, with measured local details/scenarios around 0.4 s.
+Broad-search performance remains separate from this item-detail improvement.
+
+[Craft from inventory](CRAFT_BATCHES.md) now adds discovery from usable owned
+ingredients and intermediate crafts, with no material purchases. It compares net
+material resale with net crafted-output resale, shows the added gain and upfront
+sale fees, and keeps that constraint when a plan is refreshed or resized.
+
 ---
 
 # Guiding Principles

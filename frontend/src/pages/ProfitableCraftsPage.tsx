@@ -51,6 +51,7 @@ import { formatCoins, formatDateTime, formatNumber, formatPercent } from "../uti
 import CraftPlanPanel from "../components/CraftPlanPanel"
 import AccountCraftingPanel from "../components/AccountCraftingPanel"
 import BatchRecommendationsPanel from "../components/BatchRecommendationsPanel"
+import TradingPostPanel from "../components/TradingPostPanel"
 import ItemReferenceLinks, { ItemMarketLink } from "../components/ItemReferenceLinks"
 
 const disciplineOptions = [
@@ -662,6 +663,10 @@ function CraftsWorkspace({ accountId, profiles, profileError, onAccountChange, o
 	const [syncMessage, setSyncMessage] = useState<string | null>(null)
 	const [accountApiKey, setAccountApiKey] = useState("")
 	const [accountSyncing, setAccountSyncing] = useState(false)
+    const [includeTradingPost, setIncludeTradingPost] = useState(() => {
+        try { return localStorage.getItem(`gw2-profit:include-trading-post:${accountId}`) === "true" }
+        catch { return false }
+    })
 	const [accountSyncError, setAccountSyncError] = useState<string | null>(null)
 	const [accountSyncMessage, setAccountSyncMessage] = useState<string | null>(null)
 	const [watchlistIds, setWatchlistIds] = useState(() => loadSavedWatchlistIds(accountId))
@@ -673,7 +678,10 @@ function CraftsWorkspace({ accountId, profiles, profileError, onAccountChange, o
 
 	const [selectedItem, setSelectedItem] = useState<ProfitableCraft | null>(null)
 	const [scenarioRows, setScenarioRows] = useState<ProfitScenario[]>([])
+	const [scenarioLoading, setScenarioLoading] = useState(false)
+	const [scenarioError, setScenarioError] = useState<string | null>(null)
 	const [listingDepth, setListingDepth] = useState<ListingDepthAnalysis | null>(null)
+	const [listingDepthLoading, setListingDepthLoading] = useState(false)
 	const [listingDepthError, setListingDepthError] = useState<string | null>(null)
 	const [priceHistory, setPriceHistory] = useState<PriceHistoryResponse | null>(null)
 	const [priceHistoryError, setPriceHistoryError] = useState<string | null>(null)
@@ -705,9 +713,15 @@ function CraftsWorkspace({ accountId, profiles, profileError, onAccountChange, o
     const [eligibleOnly, setEligibleOnly] = useState(Boolean(accountId))
 	const tableRequest = useRef(0)
 	const detailRequest = useRef(0)
+	const historyRequest = useRef(0)
+	const detailAbort = useRef<AbortController | null>(null)
+	const historyAbort = useRef<AbortController | null>(null)
 	const depthRequest = useRef(0)
 	const alive = useRef(true)
-	useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
+	useEffect(() => {
+		alive.current = true
+		return () => { alive.current = false; detailAbort.current?.abort(); historyAbort.current?.abort() }
+	}, [])
 
 	const watchlistIdSet = useMemo(() => new Set(watchlistIds), [watchlistIds])
 
@@ -731,8 +745,20 @@ function CraftsWorkspace({ accountId, profiles, profileError, onAccountChange, o
 	const loadData = useCallback(async () => {
         const request = ++tableRequest.current
         ++detailRequest.current
+        detailAbort.current?.abort()
+        historyAbort.current?.abort()
         ++depthRequest.current
         setSelectedItem(null)
+        setDetailError(null)
+        setScenarioRows([])
+        setScenarioError(null)
+        setScenarioLoading(false)
+        setListingDepth(null)
+        setListingDepthError(null)
+        setListingDepthLoading(false)
+        setPriceHistory(null)
+        setPriceHistoryError(null)
+        setPriceHistoryLoading(false)
         setRows([])
         setTableDepthByKey({})
         setTableDepthErrorsByKey({})
@@ -792,79 +818,70 @@ function CraftsWorkspace({ accountId, profiles, profileError, onAccountChange, o
 		outputPricing,
 	])
 
-	async function loadPriceHistoryForItem(
-		itemId: number,
-		rangeDays: number,
-	): Promise<PriceHistoryResponse | null> {
+	async function loadPriceHistoryForItem(itemId: number, rangeDays: number) {
+		const request = ++historyRequest.current
+		const detailGeneration = detailRequest.current
+		historyAbort.current?.abort()
+		const controller = new AbortController()
+		historyAbort.current = controller
+		const current = () => alive.current && !controller.signal.aborted &&
+			request === historyRequest.current && detailGeneration === detailRequest.current
+		setPriceHistory(null)
+		setPriceHistoryError(null)
+		setPriceHistoryLoading(true)
 		try {
-			return await fetchPriceHistory(itemId, {
-				range_days: rangeDays,
-				resolution: "auto",
+			const history = await fetchPriceHistory(itemId, {
+				range_days: rangeDays, resolution: "auto", signal: controller.signal,
 			})
+			if (current()) setPriceHistory(history)
 		} catch (err) {
-			if (err instanceof Error) {
-				setPriceHistoryError(err.message)
-			} else {
-				setPriceHistoryError("Unknown error occurred while loading local price history.")
-			}
-
-			return null
+			if (current()) setPriceHistoryError(err instanceof Error ? err.message : "Could not load local price history.")
+		} finally {
+			if (current()) setPriceHistoryLoading(false)
 		}
 	}
 
 	async function handleSelectItem(itemId: number, recipeId: number) {
 		const request = ++detailRequest.current
+		detailAbort.current?.abort()
+		const controller = new AbortController()
+		detailAbort.current = controller
+		const current = () => alive.current && request === detailRequest.current && !controller.signal.aborted
 		setSelectedItem(null)
+		setDetailLoading(true)
+		setDetailError(null)
+		setScenarioRows([])
+		setScenarioError(null)
+		setScenarioLoading(true)
+		setListingDepth(null)
+		setListingDepthError(null)
+		setListingDepthLoading(true)
+		const options = {
+			recipe_id: recipeId, account_id: accountId || undefined, eligible_only: eligibleOnly,
+			material_pricing: materialPricing, output_pricing: outputPricing, signal: controller.signal,
+		}
+		// Each panel settles independently; external listings never hold up the item.
+		void fetchProfitScenarios(itemId, accountId || undefined, recipeId, eligibleOnly, controller.signal)
+			.then(data => { if (current()) setScenarioRows(data) })
+			.catch(err => { if (current()) setScenarioError(err instanceof Error ? err.message : "Could not load pricing scenarios.") })
+			.finally(() => { if (current()) setScenarioLoading(false) })
+		void fetchListingDepth(itemId, options)
+			.then(data => { if (current()) setListingDepth(data) })
+			.catch(err => { if (current()) setListingDepthError(err instanceof Error ? err.message : "Could not load Trading Post depth.") })
+			.finally(() => { if (current()) setListingDepthLoading(false) })
+		void loadPriceHistoryForItem(itemId, priceHistoryRangeDays)
 		try {
-			setDetailLoading(true)
-			setDetailError(null)
-			setScenarioRows([])
-			setListingDepth(null)
-			setListingDepthError(null)
-			setPriceHistory(null)
-			setPriceHistoryError(null)
-			setPriceHistoryLoading(true)
-
-			const [detail, scenarios, depth, history] = await Promise.all([
-				fetchProfitDetail(itemId, {
-					recipe_id: recipeId,
-					account_id: accountId || undefined,
-                    eligible_only: eligibleOnly,
-					material_pricing: materialPricing,
-					output_pricing: outputPricing,
-				}),
-				fetchProfitScenarios(itemId, accountId || undefined, recipeId, eligibleOnly),
-				fetchListingDepth(itemId, {
-                    account_id: accountId || undefined, eligible_only: eligibleOnly,
-					recipe_id: recipeId,
-					material_pricing: materialPricing,
-                        output_pricing: outputPricing,
-				}).catch((err) => {
-					if (!alive.current || request !== detailRequest.current) return null
-					if (err instanceof Error) {
-						setListingDepthError(err.message)
-					} else {
-						setListingDepthError("Unknown error occurred while loading Trading Post listing depth.")
-					}
-
-					return null
-				}),
-				loadPriceHistoryForItem(itemId, priceHistoryRangeDays),
-			])
-			if (!alive.current || request !== detailRequest.current) return
-			setSelectedItem(detail)
-			setScenarioRows(scenarios)
-			setListingDepth(depth)
-			setPriceHistory(history)
+			const detail = await fetchProfitDetail(itemId, options)
+			if (current()) setSelectedItem(detail)
 		} catch (err) {
-			if (!alive.current || request !== detailRequest.current) return
+			if (!current()) return
 			if (err instanceof Error) {
 				setDetailError(err.message)
 			} else {
 				setDetailError("Unknown error occurred.")
 			}
 		} finally {
-			if (alive.current && request === detailRequest.current) { setDetailLoading(false); setPriceHistoryLoading(false) }
+			if (current()) setDetailLoading(false)
 		}
 	}
 
@@ -875,13 +892,7 @@ function CraftsWorkspace({ accountId, profiles, profileError, onAccountChange, o
 			return
 		}
 
-		setPriceHistory(null)
-		setPriceHistoryError(null)
-		setPriceHistoryLoading(true)
-
-		const history = await loadPriceHistoryForItem(selectedItem.item_id, nextRangeDays)
-		setPriceHistory(history)
-		setPriceHistoryLoading(false)
+		await loadPriceHistoryForItem(selectedItem.item_id, nextRangeDays)
 	}
 
 	function handleSort(nextKey: SortKey) {
@@ -895,8 +906,6 @@ function CraftsWorkspace({ accountId, profiles, profileError, onAccountChange, o
 	}
 
 	async function handleDataSync(dataset: SyncDataset) {
-		const selectedItemId = selectedItem?.item_id
-
 		try {
 			setSyncInProgress(dataset)
 			setSyncError(null)
@@ -923,18 +932,6 @@ function CraftsWorkspace({ accountId, profiles, profileError, onAccountChange, o
 
 			await loadData()
 
-			if (dataset === "prices" && selectedItemId !== undefined) {
-				try {
-					setPriceHistory(null)
-					setPriceHistoryError(null)
-					setPriceHistoryLoading(true)
-
-					const history = await loadPriceHistoryForItem(selectedItemId, priceHistoryRangeDays)
-					setPriceHistory(history)
-				} finally {
-					setPriceHistoryLoading(false)
-				}
-			}
 		} catch (err) {
 			if (err instanceof Error) {
 				setSyncError(err.message)
@@ -953,9 +950,10 @@ function CraftsWorkspace({ accountId, profiles, profileError, onAccountChange, o
         setAccountSyncError(null)
         setAccountSyncMessage(null)
         try {
-            const result = await syncAccountHoldings(apiKey, accountId || undefined)
+            const result = await syncAccountHoldings(apiKey, accountId || undefined, includeTradingPost)
             if (!alive.current) return
             setAccountApiKey("")
+            try { localStorage.setItem(`gw2-profit:include-trading-post:${result.account_id}`, String(includeTradingPost)) } catch { /* Optional preference. */ }
             onAccountSynced(result.account_id)
         } catch (err) {
             if (alive.current) setAccountSyncError(err instanceof Error ? err.message : "Account refresh failed.")
@@ -1725,6 +1723,11 @@ function CraftsWorkspace({ accountId, profiles, profileError, onAccountChange, o
 								</Button>
 							</Stack>
 
+                            <FormControlLabel label="Include Trading Post orders and pickups (requires tradingpost permission)"
+                                control={<Checkbox checked={includeTradingPost} disabled={accountSyncing} onChange={event => {
+                                    setIncludeTradingPost(event.target.checked)
+                                    try { localStorage.setItem(`gw2-profit:include-trading-post:${accountId}`, String(event.target.checked)) } catch { /* Optional preference. */ }
+                                }} />} />
 							<Stack
 								direction={{ xs: "column", sm: "row" }}
 								spacing={1}
@@ -1745,6 +1748,7 @@ function CraftsWorkspace({ accountId, profiles, profileError, onAccountChange, o
 				</Paper>
 
                 {accountId && <AccountCraftingPanel accountId={accountId} onChanged={() => onAccountSynced(accountId)} />}
+                {accountId && <TradingPostPanel key={accountId} accountId={accountId} />}
                 <BatchRecommendationsPanel key={accountId} accountId={accountId} accountName={profiles.find(profile => profile.id === accountId)?.display_name ?? "Market estimates"} />
 
 				<Paper
@@ -2327,9 +2331,15 @@ function CraftsWorkspace({ accountId, profiles, profileError, onAccountChange, o
 				open={selectedItem !== null || detailLoading || detailError !== null}
 				onClose={() => {
 					++detailRequest.current
+					detailAbort.current?.abort()
+					historyAbort.current?.abort()
+					setDetailLoading(false)
 					setSelectedItem(null)
 					setScenarioRows([])
+					setScenarioLoading(false)
+					setScenarioError(null)
 					setListingDepth(null)
+					setListingDepthLoading(false)
 					setListingDepthError(null)
 					setPriceHistory(null)
 					setPriceHistoryError(null)
@@ -2570,6 +2580,9 @@ function CraftsWorkspace({ accountId, profiles, profileError, onAccountChange, o
 									Trading Post Market Depth
 								</Typography>
                                 <Typography variant="body2">Output depth assumes fixed material costs. Validate both purchases and sales with Refresh and check depth in the plan. Listings are not confirmed sales.</Typography>
+								{listingDepthLoading && <Stack direction="row" spacing={1} sx={{ my: 2 }} alignItems="center" role="status">
+									<CircularProgress size={20} /><Typography variant="body2">Loading live market depth…</Typography>
+								</Stack>}
 
 								{listingDepthError && (
 									<Alert severity="warning" sx={{ mb: 1.5 }}>
@@ -2725,11 +2738,15 @@ function CraftsWorkspace({ accountId, profiles, profileError, onAccountChange, o
 								<Typography variant="h6" gutterBottom sx={{ color: "#3d2d1c", fontWeight: 800 }}>
 									Scenario Comparison
 								</Typography>
+								{scenarioLoading && <Stack direction="row" spacing={1} sx={{ my: 2 }} alignItems="center" role="status">
+									<CircularProgress size={20} /><Typography variant="body2">Loading pricing scenarios…</Typography>
+								</Stack>}
+								{scenarioError && <Alert severity="warning" sx={{ mb: 1.5 }}>{scenarioError}</Alert>}
 
 								<TableContainer
 									component={Paper}
 									variant="outlined"
-									sx={{ borderColor: "rgba(98, 63, 24, 0.14)", maxHeight: 320 }}
+									sx={{ borderColor: "rgba(98, 63, 24, 0.14)", maxHeight: 320, display: scenarioRows.length ? "block" : "none" }}
 								>
 									<Table stickyHeader size="small" sx={{ minWidth: 1000 }}>
 										<TableHead>

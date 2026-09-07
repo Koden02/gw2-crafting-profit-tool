@@ -1,8 +1,11 @@
 from contextlib import asynccontextmanager
+import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from sqlalchemy.exc import OperationalError
+from app.db.errors import is_database_busy
 from app.services.reservation_service import AccountDataChanged
 
 from app.api.account import router as account_router
@@ -41,6 +44,11 @@ app.add_middleware(
 )
 
 
+@app.get("/", include_in_schema=False)
+def open_site() -> RedirectResponse:
+	return RedirectResponse("http://127.0.0.1:5173/", status_code=307)
+
+
 @app.get("/api/health")
 def health_check() -> dict[str, str]:
 	return {"status": "ok"}
@@ -49,6 +57,18 @@ def health_check() -> dict[str, str]:
 @app.exception_handler(AccountDataChanged)
 async def account_data_changed(request, exc):
 	return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(OperationalError)
+async def database_operational_error(request, exc):
+	if not is_database_busy(exc):
+		raise exc
+	logging.getLogger(__name__).warning("SQLite busy: %s %s", request.method, request.url.path)
+	return JSONResponse(
+		status_code=503,
+		headers={"Retry-After": "5"},
+		content={"detail": "The local database is busy with another operation. Wait a moment and try again."},
+	)
 
 
 app.include_router(sync_router)

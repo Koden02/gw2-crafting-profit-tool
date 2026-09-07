@@ -1,4 +1,4 @@
-import { BrowserRouter, Link as RouterLink, Route, Routes, useLocation } from "react-router-dom"
+import { BrowserRouter, Link as RouterLink, Navigate, Route, Routes, useLocation } from "react-router-dom"
 import { Box, Button, Stack, Typography } from "@mui/material"
 
 import OptionsPage from "./pages/OptionsPage"
@@ -68,6 +68,7 @@ function AppShell() {
 				<Route path="/" element={<ProfitableCraftsPage />} />
 				<Route path="/options" element={<OptionsPage />} />
 				<Route path="/tracked-items" element={<TrackedItemsPage />} />
+				<Route path="*" element={<Navigate to="/" replace />} />
 			</Routes>
 		</Box>
 	)

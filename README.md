@@ -11,6 +11,12 @@ GW2 Craft Profit Tool is a local full-stack app for analyzing Guild Wars 2 craft
 
 Project status: Early Development v0.2.0, with local account isolation, crafting eligibility, expanded inventory and budgeted crafting batches.
 
+**Open the local app:** [http://127.0.0.1:5173/](http://127.0.0.1:5173/).
+The root address opens the Crafts landing page. Both the backend and frontend must
+be running using the commands below. Visiting [port 8000](http://127.0.0.1:8000/)
+also redirects to the site; API documentation remains at
+[port 8000/docs](http://127.0.0.1:8000/docs).
+
 See [account quotes and upgrade instructions](docs/ACCOUNT_QUOTES.md). Pause automatic price sync, back up the database, restart the backend, and refresh recipes and prices sequentially before syncing an explicitly selected account. Resume automatic price sync afterward. Legacy holdings remain preserved with an unknown owner and are excluded from plans.
 
 The v0.2.0 release starts the historical price analysis track with per-item price history reads and item drawer charts over locally recorded price snapshots and rollups. The app also includes local data sync, automatic server-side price refresh, configurable snapshot retention, dedicated options and tracked-item review pages, sync overlap protection, craft profitability analysis, Trading Post depth visibility, table-level risk signals, owned-material adjusted batch planning, saved filters, watchlists, endpoint smoke coverage, and a usable frontend for browsing profitable crafts. Selected-account results verify character crafting levels and recipe eligibility, exclude reserved stock, and rank by gain after valuing consumed stock. **Find a profitable crafting batch** now checks whole quantities against a gold budget and live instant-buy/instant-sell depth, with a shopping plan and a local completed-result log. See [crafting batch usage and limits](docs/CRAFT_BATCHES.md). JSON import, combined multi-craft allocation, full cooldown/non-TP support, trend scoring and packaging remain future work. Quotes still depend on the stated market assumptions.
@@ -23,6 +29,7 @@ The v0.2.0 release starts the historical price analysis track with per-item pric
 - Trading Post fee handling.
 - Profitable crafts endpoint with filters.
 - Pricing strategy modes:
+  - Account batch finder: optional buy-order plans using pending orders and pickups, with separate committed costs and new funding. See [buy-order planning](docs/BUY_ORDER_PLANS.md).
   - `material_pricing=buy`: value materials at buy-order prices.
   - `material_pricing=sell`: value materials at instant-buy prices.
   - `output_pricing=sell`: value crafted output at list-sell prices.
@@ -151,7 +158,7 @@ pip install -r requirements.txt
 Run the backend:
 
 ```powershell
-uvicorn app.main:app --reload
+.\venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --reload-dir app
 ```
 
 Backend URL:
@@ -159,6 +166,10 @@ Backend URL:
 ```text
 http://127.0.0.1:8000
 ```
+
+This development command reloads backend code changes automatically. See
+[item-loading performance and validation](docs/ITEM_LOADING.md) for the current
+item-detail improvements and remaining search scope.
 
 API docs:
 
@@ -182,7 +193,10 @@ Frontend URL:
 http://127.0.0.1:5173
 ```
 
-Vite may choose a later port if 5173 is already in use.
+The frontend stays on port 5173. If that port is already in use, Vite reports an
+error instead of silently choosing another address. Check whether the app is
+already running before starting another copy. Unknown frontend page paths return
+to the Crafts landing page.
 
 ## Data Synchronization
 
@@ -197,6 +211,13 @@ Recommended first sync order from the frontend:
 Items and recipes are the slower first-run datasets. Prices are the normal refresh before checking profitability.
 
 The backend also runs automatic price refresh on the configured interval. The default is every 15 minutes. Automatic price sync can be paused or resumed from the frontend, and price history can be limited by retention days, rollup retention, max estimated history size, tracked item mode, and ignored items. Manual and automatic price syncs share one lock, so only one Trading Post price sync can run at a time.
+
+Database connections wait up to 30 seconds for competing SQLite operations. If a
+lock lasts longer, the API returns HTTP 503 with a database-busy message and a
+five-second `Retry-After` hint. Wait and retry the action; the app does not replay
+account writes automatically. Restart the backend after updating to load these
+connection settings. This reduces transient failures, but does not eliminate
+SQLite's single-writer limit or make long database work instantaneous.
 
 The same sync actions are available as API calls:
 

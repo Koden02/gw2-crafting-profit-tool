@@ -7,6 +7,9 @@ from app.db.dependencies import get_db
 from app.services.gw2_client import GW2Client
 from app.services.profit_engine import ProfitEngine
 from app.services.craft_planner import CraftPlanner
+from app.services.order_planner import OrderAwarePlanner
+from app.models import AccountProfile
+from app.services.reservation_service import AccountDataChanged
 from app.api.account import require_account
 
 router = APIRouter(prefix="/api/profit", tags=["profit"])
@@ -34,7 +37,7 @@ def get_profit(
 		raise HTTPException(status_code=422, detail="Select an account for eligible crafts.")
 	if account_id:
 		require_account(db, account_id)
-	engine = ProfitEngine(db, account_id)
+	engine = ProfitEngine(db, account_id, root_item_id=item_id)
 	result = engine.calculate_profit(
 		item_id,
 		material_pricing=material_pricing,
@@ -62,7 +65,7 @@ def get_profit_scenarios(
 		raise HTTPException(status_code=422, detail="Select an account for eligible crafts.")
 	if account_id:
 		require_account(db, account_id)
-	engine = ProfitEngine(db, account_id)
+	engine = ProfitEngine(db, account_id, root_item_id=item_id)
 	results = []
 
 	for material_pricing, output_pricing in SCENARIOS:
@@ -105,7 +108,7 @@ def get_profit_listing_depth(
 		raise HTTPException(status_code=422, detail="Select an account for eligible crafts.")
 	if account_id:
 		require_account(db, account_id)
-	engine = ProfitEngine(db, account_id)
+	engine = ProfitEngine(db, account_id, include_history=False, root_item_id=item_id)
 	client = GW2Client()
 
 	try:
@@ -151,15 +154,29 @@ def get_craft_plan(
     recipe_id: int | None = None,
     check_depth: bool = False,
     eligible_only: bool = True,
+    use_trading_post: bool = False,
+    inventory_only: bool = False,
     db: Session = Depends(get_db),
 ) -> dict:
     if account_id:
         require_account(db, account_id)
-    engine = ProfitEngine(db, account_id)
+    if inventory_only and (not account_id or use_trading_post):
+        raise HTTPException(status_code=422, detail="Crafting from inventory requires an account and excludes Trading Post purchases.")
+    if use_trading_post and (not account_id or material_pricing != "buy" or output_pricing != "buy"):
+        raise HTTPException(status_code=422, detail="Trading Post planning requires an account, material buy orders and instant-sell output pricing.")
+    engine = ProfitEngine(db, account_id, include_history=False, root_item_id=item_id)
     client = GW2Client()
     client.timeout = 5.0
-    planner = CraftPlanner(engine, material_pricing, output_pricing, liquidation_pricing,
+    expected_version = (engine.profile.snapshot_id, engine.profile.reservation_revision) if account_id else None
+    planner_type = OrderAwarePlanner if use_trading_post else CraftPlanner
+    planner = planner_type(engine, material_pricing, output_pricing, liquidation_pricing,
                            listing_provider=client.fetch_commerce_listing if check_depth else None,
-                           require_eligible=eligible_only and account_id is not None)
-    return planner.build(item_id, quantity, use_owned=account_id is not None,
-                         budget=budget, recipe_id=recipe_id)
+                           require_eligible=(eligible_only or inventory_only) and account_id is not None,
+                           inventory_only=inventory_only)
+    result = planner.build(item_id, quantity, use_owned=account_id is not None,
+                           budget=budget, recipe_id=recipe_id)
+    if account_id:
+        current = db.query(AccountProfile.snapshot_id, AccountProfile.reservation_revision).filter_by(id=account_id).one()
+        if tuple(current) != expected_version:
+            raise AccountDataChanged("Account data or reservations changed during the quote. Refresh the plan.")
+    return result

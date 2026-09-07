@@ -214,6 +214,8 @@ export type RecipeSyncResult = {
 }
 
 export type AccountHoldingsSyncResult = {
+	trading_post_status?: string
+	trading_post_error?: string | null
 	account_id: string
 	snapshot_id: string
 	status: string
@@ -287,6 +289,7 @@ export async function fetchProfitableCrafts(
 export async function fetchProfitDetail(
 	itemId: number,
 	options?: {
+		signal?: AbortSignal
 		eligible_only?: boolean
 		recipe_id?: number
 		account_id?: string
@@ -308,24 +311,26 @@ export async function fetchProfitDetail(
 	}
 
 	const suffix = params.toString() ? `?${params.toString()}` : ""
-	const response = await fetch(`${API_BASE_URL}/api/profit/${itemId}${suffix}`)
+	const response = await fetch(`${API_BASE_URL}/api/profit/${itemId}${suffix}`, { signal: options?.signal })
 
 	if (!response.ok) {
-		throw new Error(`Failed to fetch profit detail: ${response.status}`)
+		const body = await response.json().catch(() => null)
+		throw new Error(typeof body?.detail === "string" ? body.detail : `Failed to fetch profit detail: ${response.status}`)
 	}
 
 	return response.json()
 }
 
-export async function fetchProfitScenarios(itemId: number, accountId?: string, recipeId?: number, eligibleOnly = false): Promise<ProfitScenario[]> {
+export async function fetchProfitScenarios(itemId: number, accountId?: string, recipeId?: number, eligibleOnly = false, signal?: AbortSignal): Promise<ProfitScenario[]> {
 	const params = new URLSearchParams()
 	if (accountId) params.set("account_id", accountId)
 	params.set("eligible_only", String(eligibleOnly))
 	if (recipeId !== undefined) params.set("recipe_id", String(recipeId))
-	const response = await fetch(`${API_BASE_URL}/api/profit/${itemId}/scenarios?${params}`)
+	const response = await fetch(`${API_BASE_URL}/api/profit/${itemId}/scenarios?${params}`, { signal })
 
 	if (!response.ok) {
-		throw new Error(`Failed to fetch profit scenarios: ${response.status}`)
+		const body = await response.json().catch(() => null)
+		throw new Error(typeof body?.detail === "string" ? body.detail : `Failed to fetch profit scenarios: ${response.status}`)
 	}
 
 	return response.json()
@@ -334,6 +339,7 @@ export async function fetchProfitScenarios(itemId: number, accountId?: string, r
 export async function fetchListingDepth(
 	itemId: number,
 	options?: {
+		signal?: AbortSignal
 		account_id?: string
 		eligible_only?: boolean
 		recipe_id?: number
@@ -352,7 +358,7 @@ export async function fetchListingDepth(
 	}
 
 	const suffix = params.toString() ? `?${params.toString()}` : ""
-	const response = await fetch(`${API_BASE_URL}/api/profit/${itemId}/listing-depth${suffix}`)
+	const response = await fetch(`${API_BASE_URL}/api/profit/${itemId}/listing-depth${suffix}`, { signal: options?.signal })
 
 	if (!response.ok) {
 		const detail = await response.json().catch(() => null)
@@ -366,6 +372,7 @@ export async function fetchListingDepth(
 export async function fetchPriceHistory(
 	itemId: number,
 	options: {
+		signal?: AbortSignal
 		range_days?: number
 		resolution?: PriceHistoryResolution
 	} = {},
@@ -381,7 +388,7 @@ export async function fetchPriceHistory(
 	}
 
 	const suffix = params.toString() ? `?${params.toString()}` : ""
-	const response = await fetch(`${API_BASE_URL}/api/price-history/${itemId}${suffix}`)
+	const response = await fetch(`${API_BASE_URL}/api/price-history/${itemId}${suffix}`, { signal: options.signal })
 
 	if (!response.ok) {
 		const detail = await response.json().catch(() => null)
@@ -562,13 +569,13 @@ export async function syncRecipes(): Promise<RecipeSyncResult> {
 	return response.json()
 }
 
-export async function syncAccountHoldings(apiKey: string, accountId?: string): Promise<AccountHoldingsSyncResult> {
+export async function syncAccountHoldings(apiKey: string, accountId?: string, includeTradingPost = false): Promise<AccountHoldingsSyncResult> {
 	const response = await fetch(`${API_BASE_URL}/api/account/sync/holdings`, {
 		method: "POST",
 		headers: {
 			"Content-Type": "application/json",
 		},
-		body: JSON.stringify({ api_key: apiKey, account_id: accountId, include_crafting: true }),
+		body: JSON.stringify({ api_key: apiKey, account_id: accountId, include_crafting: true, include_trading_post: includeTradingPost }),
 	})
 
 	if (!response.ok) {
@@ -600,6 +607,12 @@ export type AccountProfile = {
 }
 
 export type CraftPlan = {
+    inventory_only?: boolean
+    procurement?: {
+        new_order_cost: number; committed_cost: number; listing_fees: number
+        pickup_quantity: number; pending_quantity: number; fetched_at: string; snapshot_id: string
+        state: "place_orders" | "waiting_for_orders" | "collect_items" | "ready"
+    }
     eligibility: string
     reservation_revision: number | null
     reserved: { item_id: number; name: string; quantity: number }[]
@@ -622,7 +635,11 @@ export type CraftPlan = {
     issues: string[]
     fee_model: string
     allocation_policy: string
-    purchases: { item_id: number; name: string; quantity: number; cost: number }[]
+    purchases: { item_id: number; name: string; quantity: number; cost: number
+        pickup_quantity?: number; pending_quantity?: number; new_order_quantity?: number
+        target_unit_price?: number; new_order_cost?: number; committed_cost?: number
+        orders?: { order_id: number; quantity: number; unit_price: number }[]
+    }[]
     consumed: { item_id: number; name: string; quantity: number; locations?: { source: string; position: string; quantity: number }[] }[]
     steps: { recipe_id: number; item_id: number; name: string; runs: number; produced: number; eligibility: string; recipe_state: string; crafter: string | null; eligible_characters: EligibleCharacter[] }[]
     leftovers: { item_id: number; name: string; quantity: number }[]
@@ -637,7 +654,7 @@ export async function fetchAccountProfiles(): Promise<AccountProfile[]> {
 export async function fetchCraftPlan(itemId: number, options: {
     quantity: number; account_id?: string; material_pricing: MaterialPricingMode
     output_pricing: OutputPricingMode; liquidation_pricing?: OutputPricingMode
-    budget?: number; check_depth: boolean; recipe_id?: number; eligible_only?: boolean
+    budget?: number; check_depth: boolean; recipe_id?: number; eligible_only?: boolean; use_trading_post?: boolean; inventory_only?: boolean
 }, signal?: AbortSignal): Promise<CraftPlan> {
     const params = new URLSearchParams()
     for (const [key, value] of Object.entries(options)) {
@@ -662,8 +679,10 @@ export type CraftingStatus = {
 
 export type InventoryCoverage = { complete: boolean; missing_or_stale: string[]; sources: { source: string; fresh: boolean; fetched_at: string | null; status: string }[] }
 export type BatchSearch = {
+    inventory_only: boolean
+    material_pricing: MaterialPricingMode
     account_id: string; snapshot_id: string; reservation_revision: number
-    budget: number; minimum_gain: number; max_output: number; observed_at: string
+    budget: number | null; minimum_gain: number; max_output: number; observed_at: string
     inventory_coverage: InventoryCoverage
     suggestions: { plan: CraftPlan; quantity_limit_reason: string }[]
     issues: string[]; candidate_count: number; candidates_checked: number; quantities_checked: number
@@ -671,7 +690,7 @@ export type BatchSearch = {
     market_observed_from?: string | null; market_observed_to?: string | null
 }
 
-export async function fetchBatchRecommendations(options: { account_id: string; budget: number; minimum_gain: number; max_output: number }, signal: AbortSignal): Promise<BatchSearch> {
+export async function fetchBatchRecommendations(options: { account_id: string; budget?: number; minimum_gain: number; max_output: number; material_pricing?: MaterialPricingMode; inventory_only?: boolean }, signal: AbortSignal): Promise<BatchSearch> {
     const response = await fetch(`${API_BASE_URL}/api/craft-recommendations`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(options), signal,
     })
@@ -692,6 +711,16 @@ async function accountRead<T>(path: string, accountId: string, search: string, s
 }
 export function fetchCraftingStatus(accountId: string, signal?: AbortSignal) {
     return accountRead<CraftingStatus>("crafting", accountId, "", signal)
+}
+export type TradingPostStatus = {
+    account_id: string; fresh: boolean; status: string; fetched_at: string | null
+    snapshot_id: string | null; error: string | null; matches_inventory: boolean; note: string; committed_gold: number
+    buys: TradingPostOrder[]; sells: TradingPostOrder[]
+    delivery: { coins: number; items: { item_id: number; name: string; quantity: number }[] }
+}
+export type TradingPostOrder = { id: number; item_id: number; name: string; price: number; quantity: number; created: string }
+export function fetchTradingPostStatus(accountId: string, signal?: AbortSignal) {
+    return accountRead<TradingPostStatus>("trading-post", accountId, "", signal)
 }
 export function fetchAccountMaterials(accountId: string, search: string, signal?: AbortSignal) {
     return accountRead<AccountMaterials>("materials", accountId, search, signal)

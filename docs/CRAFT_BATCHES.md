@@ -1,4 +1,4 @@
-# Budgeted crafting batches
+# Inventory and budgeted crafting batches
 
 Implemented on `codex/inventory-coverage`, September 2026. This milestone connects
 account inventory and crafting access to a practical single-craft workflow. It uses
@@ -9,9 +9,16 @@ the existing [account and quote contracts](ACCOUNT_QUOTES.md).
 1. Refresh recipes if the cache predates eligibility support, then refresh prices.
    Choose an account and **Sync Account Data** with `account`, `inventories`,
    `characters` and `unlocks` permissions. Check inventory and character coverage.
-2. In **Find a profitable crafting batch**, enter a gold budget, minimum total gain,
-   and maximum output count. **Find batches** checks current instant-buy material
-   offers and instant-sell output offers for a bounded shortlist.
+2. In **Find a profitable crafting batch**, choose **Craft from inventory** to find
+   supported crafts using only usable stock you already own, including intermediate
+   crafts. This mode defaults to a one-copper minimum gain and a 100-output cap;
+   no purchase budget is needed. Compare **Sell materials as-is**, **Sell crafted
+   output**, and **Extra gold from crafting**. Both resale figures are after fees;
+   **Gold needed for sale fees** is funding needed before selling, not another
+   deduction from gain. Collect Trading Post pickups and sync to include them.
+   Alternatively, choose **Buy missing materials** and enter a gold budget, minimum
+   total gain, maximum output count and instant-buy or buy-order strategy.
+   **Find batches** verifies current market books for a bounded shortlist.
 3. Compare expected gain, upfront gold and material purchases. Each result is an
    independent use of the same stock and budget; results are not a combined basket.
 4. **Review and refresh plan** obtains a new quote for the suggested recipe and
@@ -76,11 +83,28 @@ caches, holdings and reservations remain intact. Backups belong locally outside 
 | Field | Meaning |
 | --- | --- |
 | `account_id` | Explicit verified account; required |
-| `budget` | Positive upfront funding limit in copper, at most 100,000,000 |
+| `inventory_only` | Default false for API compatibility; true disallows all material purchases and pending orders |
+| `budget` | Positive upfront funding limit in copper, at most 100,000,000; required when buying materials, ignored and returned as null for inventory-only searches |
 | `minimum_gain` | Minimum total economic gain in copper; default 1,000, same upper bound |
 | `max_output` | Maximum total output count, 1–200; default 100 |
+| `material_pricing` | `sell` for instant purchases (default), `buy` for orders; inventory-only searches normalize this to `sell` without making purchases |
 
 The endpoint returns at most five independent suggestions.
+
+Inventory-only discovery starts with positive, unreserved usable holdings and follows
+ingredient-to-output links through intermediate recipes, with cycle protection.
+The planner then proves ingredient quantities and access without any purchase route;
+unowned market opportunities cannot occupy this shortlist. It uses the same bounded
+local route choices as other plans, rather than exhaustively trying every shared-stock
+allocation. Account-bound stock, unsupported/cooldown recipes and non-TP valuations
+remain excluded. Current bid depth must cover both the crafted output and the consumed
+materials' alternative sale. Intermediate leftovers are not credited as profit.
+
+`GET /api/profit/{item_id}/plan?inventory_only=true` preserves this constraint when
+reviewing or resizing a suggestion, requires an explicit account and verified crafting
+access, and rejects combination with `use_trading_post`. Increasing the target cannot
+silently add purchases. A zero-result search describes only the completed checks:
+the output cap, minimum gain, freshness and shortlist can all exclude opportunities.
 
 The service screens supported, eligible first batches using fresh cached prices,
 ranks candidates by estimated gain per output, and checks at most 12 recipe
@@ -123,7 +147,23 @@ reservation, sync and search-input changes invalidate dependent UI results.
 
 ## Validation and remaining checks
 
-The full backend suite passes 122 tests, including new coverage for source movement,
+The inventory-only addition passes the full 185-test backend suite plus frontend
+lint and production build. New regression cases cover net liquidation comparisons,
+fees without a purchase budget, missing/reserved/bound stock, stale or locked access,
+negative conversions, nested crafting despite cheaper market intermediates,
+unowned opportunities crowding out a shortlist, output caps, live depth, account
+isolation and preserving the constraint on plan refresh. The running local backend
+has loaded the new API. The real account needs a fresh sync before live recommendations;
+this does not establish a completed craft or sale.
+
+An isolated browser fixture verified the default inventory mode, the three resale
+comparison figures, fee funding, refreshed plans with zero purchases, refusal of an
+oversized target, and clearing prior results when switching to budgeted purchases.
+Its synthetic three-output example showed 897 copper of consumed-stock resale,
+2,550 copper of net output proceeds, 1,653 copper added value and 150 copper in
+upfront sale fees. No real inventory or account snapshots were changed by this check.
+
+The original inventory-coverage milestone passed 122 tests, including coverage for source movement,
 empty/deleted characters, binding, account isolation, partial refresh freshness,
 failed reads, migration v3, depth failures, reservations, whole-output caps,
 nonmonotonic quantity selection, budget/fee arithmetic, duplicate material categories,

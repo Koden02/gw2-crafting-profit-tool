@@ -161,5 +161,5 @@ def test_v3_migration_preserves_v2_holdings_and_is_repeatable(tmp_path):
     migrate(engine)
     with engine.connect() as db:
         assert tuple(db.execute(text("SELECT total_count, usable_count, shared_count, character_count FROM account_holdings")).one()) == (7, 7, 0, 0)
-        assert list(db.execute(text("SELECT version FROM schema_migrations ORDER BY version"))) == [(1,), (2,), (3,)]
+        assert list(db.execute(text("SELECT version FROM schema_migrations ORDER BY version"))) == [(1,), (2,), (3,), (4,)]
     engine.dispose()

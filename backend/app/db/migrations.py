@@ -58,6 +58,9 @@ def migrate(engine: Engine) -> None:
                     if name not in columns:
                         connection.exec_driver_sql(f"ALTER TABLE account_holdings ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
                 connection.execute(text("INSERT INTO schema_migrations VALUES (3)"))
+            if 4 not in done:
+                # create_all above adds the isolated Trading Post observation table.
+                connection.execute(text("INSERT INTO schema_migrations VALUES (4)"))
             connection.commit()
         except Exception:
             connection.rollback()

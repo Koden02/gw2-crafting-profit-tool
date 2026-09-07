@@ -14,6 +14,8 @@ from sqlalchemy.orm import Session
 from app.models.account_holding import AccountHolding
 from app.models.account_profile import AccountProfile, AccountStack, LEGACY_ACCOUNT_ID
 from app.models.account_crafting import AccountCrafting
+from app.models.account_trading_post import AccountTradingPost
+from app.services.trading_post_service import collect_trading_post
 from app.services.account_crafting_service import collect_crafting, character_names
 from app.services.gw2_client import GW2Client
 
@@ -32,6 +34,7 @@ class InventorySnapshot:
     coverage: dict[str, Any]
     source: str = "api"
     crafting: dict | None = None
+    trading_post: dict | None = None
 
 
 class AccountService:
@@ -40,7 +43,7 @@ class AccountService:
         self.client = GW2Client()
 
     def sync_holdings(self, api_key: str, account_id: str | None = None, include_crafting: bool = False,
-                      include_inventory: bool = False) -> dict[str, Any]:
+                      include_inventory: bool = False, include_trading_post: bool = False) -> dict[str, Any]:
         identity = self.client.fetch_account(api_key)
         verified_id = identity.get("id")
         if not isinstance(verified_id, str) or not verified_id or verified_id == LEGACY_ACCOUNT_ID:
@@ -74,6 +77,7 @@ class AccountService:
             observed_at=started, stacks=stacks,
             coverage=coverage,
             crafting=crafting,
+            trading_post=collect_trading_post(self.client, api_key) if include_trading_post else None,
         ))
 
     @staticmethod
@@ -179,6 +183,17 @@ class AccountService:
             if capabilities is not None:
                 # A holdings-only refresh keeps source observation times unchanged.
                 capabilities.snapshot_id = profile.snapshot_id
+            if snapshot.trading_post is not None:
+                trading = self.db.get(AccountTradingPost, snapshot.account_id)
+                if trading is None:
+                    trading = AccountTradingPost(account_id=snapshot.account_id)
+                    self.db.add(trading)
+                trading.snapshot_id = profile.snapshot_id
+                trading.status = snapshot.trading_post["status"]
+                trading.error = snapshot.trading_post["error"]
+                if trading.status == "ok":
+                    trading.fetched_at = snapshot.trading_post["fetched_at"]
+                    trading.payload = json.dumps(snapshot.trading_post["payload"])
             self.db.query(AccountHolding).filter_by(account_id=snapshot.account_id).delete()
             self.db.query(AccountStack).filter_by(account_id=snapshot.account_id).delete()
             for stack in stacks:
@@ -201,4 +216,6 @@ class AccountService:
                     shared_items=sum(t["shared"] > 0 for t in totals.values()),
                     character_items=sum(t["character"] > 0 for t in totals.values()),
                     total_owned=sum(sum(t[k] for k in ("materials", "bank", "shared", "character")) for t in totals.values()),
-                    last_updated=snapshot.observed_at)
+                    last_updated=snapshot.observed_at,
+                    trading_post_status=snapshot.trading_post["status"] if snapshot.trading_post else "not_requested",
+                    trading_post_error=snapshot.trading_post.get("error") if snapshot.trading_post else None)

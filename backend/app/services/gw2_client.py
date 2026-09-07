@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 from urllib.parse import quote
+from time import monotonic
 
 import httpx
 
@@ -86,3 +87,34 @@ class GW2Client:
 
 	def fetch_account_recipes(self, api_key: str) -> list[int]:
 		return self._get("/v2/account/recipes", headers=self._auth_headers(api_key))
+
+	def fetch_current_orders(self, api_key: str, side: str) -> list[dict]:
+		if side not in {"buys", "sells"}:
+			raise ValueError("Invalid order side")
+		rows, expected = [], None
+		deadline = monotonic() + 60
+		with httpx.Client(timeout=min(self.timeout, 10)) as client:
+			for page in range(50):
+				if monotonic() >= deadline:
+					raise ValueError("Trading Post pagination timed out; refresh again.")
+				response = client.get(f"{self.base_url}/v2/commerce/transactions/current/{side}",
+					params={"page": page, "page_size": 200}, headers=self._auth_headers(api_key))
+				response.raise_for_status()
+				try:
+					counts = (int(response.headers["X-Page-Total"]), int(response.headers["X-Result-Total"]))
+					part = response.json()
+					if (not isinstance(part, list) or not 0 <= counts[0] <= 50 or counts[1] < 0
+							or (expected is not None and counts != expected)):
+						raise ValueError()
+				except (ValueError, KeyError) as exc:
+					raise ValueError("Incomplete or changing Trading Post pages; refresh again.") from exc
+				expected = counts
+				rows.extend(part)
+				if page + 1 >= counts[0]:
+					if len(rows) != counts[1]:
+						raise ValueError("Incomplete Trading Post orders; refresh again.")
+					return rows
+		raise ValueError("Trading Post page limit reached; previous orders were preserved.")
+
+	def fetch_delivery(self, api_key: str) -> dict:
+		return self._get("/v2/commerce/delivery", headers=self._auth_headers(api_key))
